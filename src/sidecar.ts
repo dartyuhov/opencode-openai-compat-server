@@ -9,7 +9,8 @@ import {
   PLUGIN_PACKAGE_NAME,
   type RawPluginConfig,
 } from "./config.js";
-import { OpenCodeUpstreamClient, isUpstreamClientError } from "./upstream.js";
+import { mapProviderCatalogToOpenAIModelList } from "./models.js";
+import { OpenCodeUpstreamClient, UpstreamClientError, isUpstreamClientError } from "./upstream.js";
 
 type PluginClient = PluginInput["client"];
 
@@ -270,6 +271,13 @@ const resolveRoute = (request: Request, url: URL): SidecarRouteMatch | null => {
     };
   }
 
+  if (request.method === "GET" && url.pathname === "/v1/models") {
+    return {
+      route: "/v1/models",
+      handler: handleModelsRequest,
+    };
+  }
+
   return null;
 };
 
@@ -385,6 +393,30 @@ const handleHealthRequest = async (context: SidecarRouteContext) => {
     },
     upstream,
   });
+};
+
+const handleModelsRequest = async (context: SidecarRouteContext) => {
+  if (!context.runtime.upstreamClient) {
+    throw new SidecarHttpError({
+      status: 502,
+      message: "OpenCode upstream is not configured.",
+      type: "api_error",
+      code: "upstream_unconfigured",
+      failureReason: "upstream_unconfigured",
+    });
+  }
+
+  const catalog = await context.runtime.upstreamClient.getProviderCatalog();
+
+  try {
+    return jsonResponse(mapProviderCatalogToOpenAIModelList(catalog));
+  } catch {
+    throw new UpstreamClientError({
+      code: "invalid_response",
+      message: "OpenCode upstream returned an invalid response.",
+      endpoint: "/provider",
+    });
+  }
 };
 
 const handleSidecarRequest = async (

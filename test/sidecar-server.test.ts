@@ -10,6 +10,7 @@ type LogEntry = {
 };
 
 const activeServers: Bun.Server<undefined>[] = [];
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const createFakeClient = (logs: LogEntry[]) =>
   ({
@@ -35,13 +36,14 @@ const registerServer = (fetchHandler: (request: Request) => Response | Promise<R
   return server;
 };
 
-const startTestSidecar = async (logs: LogEntry[], input?: { apiKey?: string | null; upstreamUrl?: string }) => {
+const startTestSidecar = async (logs: LogEntry[], input?: { apiKey?: string | null; upstreamUrl?: string; modelsCacheTtlMs?: number }) => {
   const runtime = await startSidecarOnce({
     client: createFakeClient(logs),
     rawConfig: {
       host: "127.0.0.1",
       port: 0,
       ...(input?.apiKey !== undefined ? { apiKey: input.apiKey } : {}),
+      ...(input?.modelsCacheTtlMs !== undefined ? { modelsCacheTtlMs: input.modelsCacheTtlMs } : {}),
     },
     ...(input?.upstreamUrl ? { upstreamUrl: new URL(input.upstreamUrl) } : {}),
   });
@@ -63,6 +65,334 @@ afterEach(async () => {
 });
 
 describe("sidecar server", () => {
+  test("lists only connected models and reuses the fresh provider cache", async () => {
+    let providerRequests = 0;
+    const upstream = registerServer(() => {
+      providerRequests += 1;
+
+      return Response.json({
+        all: [
+          {
+            id: "anthropic",
+            name: "Anthropic",
+            env: ["ANTHROPIC_API_KEY"],
+            models: {
+              "claude-sonnet-4": {
+                id: "claude-sonnet-4",
+                name: "Claude Sonnet 4",
+                release_date: "2025-12-01",
+                attachment: true,
+                reasoning: true,
+                temperature: true,
+                tool_call: true,
+                limit: {
+                  context: 200000,
+                  output: 8192,
+                },
+                options: {},
+              },
+            },
+          },
+          {
+            id: "openai",
+            name: "OpenAI",
+            api: "chat",
+            env: ["OPENAI_API_KEY"],
+            models: {
+              "gpt-5.1": {
+                id: "gpt-5.1",
+                name: "GPT 5.1",
+                release_date: "2026-01-01",
+                attachment: true,
+                reasoning: true,
+                temperature: true,
+                tool_call: true,
+                limit: {
+                  context: 200000,
+                  output: 16384,
+                },
+                options: {},
+              },
+            },
+          },
+          {
+            id: "mistral",
+            name: "Mistral",
+            env: ["MISTRAL_API_KEY"],
+            models: {},
+          },
+        ],
+        default: {
+          openai: "gpt-5.1",
+        },
+        connected: ["openai", "mistral"],
+      });
+    });
+    const logs: LogEntry[] = [];
+    const runtime = await startTestSidecar(logs, {
+      upstreamUrl: `http://127.0.0.1:${upstream.port}`,
+      modelsCacheTtlMs: 1_000,
+    });
+
+    const firstResponse = await fetch(`http://127.0.0.1:${runtime.server.port}/v1/models`);
+    const secondResponse = await fetch(`http://127.0.0.1:${runtime.server.port}/v1/models`);
+
+    expect(firstResponse.status).toBe(200);
+    expect(await firstResponse.json()).toEqual({
+      object: "list",
+      data: [
+        {
+          id: "openai/gpt-5.1",
+          object: "model",
+          created: 1767225600,
+          owned_by: "openai",
+        },
+      ],
+    });
+    expect(secondResponse.status).toBe(200);
+    expect(await secondResponse.json()).toEqual({
+      object: "list",
+      data: [
+        {
+          id: "openai/gpt-5.1",
+          object: "model",
+          created: 1767225600,
+          owned_by: "openai",
+        },
+      ],
+    });
+    expect(providerRequests).toBe(1);
+
+    const requestLogs = getRequestLogs(logs);
+    expect(requestLogs).toHaveLength(2);
+    expect(requestLogs[0]?.extra).toEqual({
+      method: "GET",
+      route: "/v1/models",
+      status: 200,
+      failureReason: null,
+    });
+    expect(requestLogs[1]?.extra).toEqual({
+      method: "GET",
+      route: "/v1/models",
+      status: 200,
+      failureReason: null,
+    });
+  });
+
+  test("refreshes the model list after cache expiry", async () => {
+    let providerRequests = 0;
+    const upstream = registerServer(() => {
+      providerRequests += 1;
+
+      return Response.json({
+        all: [
+          {
+            id: "openai",
+            name: "OpenAI",
+            api: "chat",
+            env: ["OPENAI_API_KEY"],
+            models:
+              providerRequests === 1
+                ? {
+                    "gpt-5.1": {
+                      id: "gpt-5.1",
+                      name: "GPT 5.1",
+                      release_date: "2026-01-01",
+                      attachment: true,
+                      reasoning: true,
+                      temperature: true,
+                      tool_call: true,
+                      limit: {
+                        context: 200000,
+                        output: 16384,
+                      },
+                      options: {},
+                    },
+                  }
+                : {
+                    "gpt-5.1": {
+                      id: "gpt-5.1",
+                      name: "GPT 5.1",
+                      release_date: "2026-01-01",
+                      attachment: true,
+                      reasoning: true,
+                      temperature: true,
+                      tool_call: true,
+                      limit: {
+                        context: 200000,
+                        output: 16384,
+                      },
+                      options: {},
+                    },
+                    "gpt-5.1-mini": {
+                      id: "gpt-5.1-mini",
+                      name: "GPT 5.1 Mini",
+                      release_date: "2026-02-01",
+                      attachment: true,
+                      reasoning: true,
+                      temperature: true,
+                      tool_call: true,
+                      limit: {
+                        context: 200000,
+                        output: 8192,
+                      },
+                      options: {},
+                    },
+                  },
+          },
+        ],
+        default: {
+          openai: "gpt-5.1",
+        },
+        connected: ["openai"],
+      });
+    });
+    const logs: LogEntry[] = [];
+    const runtime = await startTestSidecar(logs, {
+      upstreamUrl: `http://127.0.0.1:${upstream.port}`,
+      modelsCacheTtlMs: 40,
+    });
+
+    const firstResponse = await fetch(`http://127.0.0.1:${runtime.server.port}/v1/models`);
+    await sleep(60);
+    const refreshedResponse = await fetch(`http://127.0.0.1:${runtime.server.port}/v1/models`);
+
+    expect(firstResponse.status).toBe(200);
+    expect(await firstResponse.json()).toEqual({
+      object: "list",
+      data: [
+        {
+          id: "openai/gpt-5.1",
+          object: "model",
+          created: 1767225600,
+          owned_by: "openai",
+        },
+      ],
+    });
+    expect(refreshedResponse.status).toBe(200);
+    expect(await refreshedResponse.json()).toEqual({
+      object: "list",
+      data: [
+        {
+          id: "openai/gpt-5.1",
+          object: "model",
+          created: 1767225600,
+          owned_by: "openai",
+        },
+        {
+          id: "openai/gpt-5.1-mini",
+          object: "model",
+          created: 1769904000,
+          owned_by: "openai",
+        },
+      ],
+    });
+    expect(providerRequests).toBe(2);
+  });
+
+  test("returns a sanitized 502 instead of stale models when refreshed metadata is malformed", async () => {
+    let providerRequests = 0;
+    const upstream = registerServer(() => {
+      providerRequests += 1;
+
+      if (providerRequests === 1) {
+        return Response.json({
+          all: [
+            {
+              id: "openai",
+              name: "OpenAI",
+              api: "chat",
+              env: ["OPENAI_API_KEY"],
+              models: {
+                "gpt-5.1": {
+                  id: "gpt-5.1",
+                  name: "GPT 5.1",
+                  release_date: "2026-01-01",
+                  attachment: true,
+                  reasoning: true,
+                  temperature: true,
+                  tool_call: true,
+                  limit: {
+                    context: 200000,
+                    output: 16384,
+                  },
+                  options: {},
+                },
+              },
+            },
+          ],
+          default: {
+            openai: "gpt-5.1",
+          },
+          connected: ["openai"],
+        });
+      }
+
+      return Response.json({
+        all: [
+          {
+            id: "openai",
+            name: "OpenAI",
+            api: "chat",
+            env: ["OPENAI_API_KEY"],
+            models: [],
+          },
+        ],
+        default: {
+          openai: "gpt-5.1",
+        },
+        connected: ["openai"],
+      });
+    });
+    const logs: LogEntry[] = [];
+    const runtime = await startTestSidecar(logs, {
+      upstreamUrl: `http://127.0.0.1:${upstream.port}`,
+      modelsCacheTtlMs: 40,
+    });
+
+    const firstResponse = await fetch(`http://127.0.0.1:${runtime.server.port}/v1/models`);
+    await sleep(60);
+    const refreshedResponse = await fetch(`http://127.0.0.1:${runtime.server.port}/v1/models`);
+    const refreshedBody = (await refreshedResponse.json()) as Record<string, any>;
+
+    expect(firstResponse.status).toBe(200);
+    expect(await firstResponse.json()).toEqual({
+      object: "list",
+      data: [
+        {
+          id: "openai/gpt-5.1",
+          object: "model",
+          created: 1767225600,
+          owned_by: "openai",
+        },
+      ],
+    });
+    expect(refreshedResponse.status).toBe(502);
+    expect(refreshedBody).toEqual({
+      error: {
+        message: "OpenCode upstream returned an invalid response.",
+        type: "api_error",
+        param: null,
+        code: "invalid_response",
+      },
+    });
+    expect(providerRequests).toBe(2);
+
+    const requestLogs = getRequestLogs(logs);
+    expect(requestLogs[0]?.extra).toEqual({
+      method: "GET",
+      route: "/v1/models",
+      status: 200,
+      failureReason: null,
+    });
+    expect(requestLogs[1]?.extra).toEqual({
+      method: "GET",
+      route: "/v1/models",
+      status: 502,
+      failureReason: "invalid_response",
+    });
+  });
+
   test("reports sidecar health and upstream reachability", async () => {
     let providerRequests = 0;
     const upstream = registerServer((request) => {

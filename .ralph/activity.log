@@ -1,6 +1,7 @@
 # Activity Log
 
 ## Run Summary
+- 2026-03-17 01:08:23 | run=20260317-005852-82072 | iter=1 | mode=build | story=US-001 | duration=570s | status=success
 
 ## Events
 
@@ -9,3 +10,9 @@
 [2026-03-17 01:05:17 CET] Added Bun TypeScript scaffold, packaging validation, and smoke tests for US-001
 [2026-03-17 01:06:37 CET] Verification complete: bun test, bun run typecheck, bun run build, bun run test:e2e:real
 [2026-03-17 01:07:50 CET] Updated Ralph progress entry for US-001
+[2026-03-17 01:08:23] ITERATION 1 end (duration=570s)
+[2026-03-17 01:08:26] ITERATION 2 start (mode=build story=US-002)
+[2026-03-17 01:08:40 CET] Start US-002 work: reviewing guardrails, errors, PRD, and startup code
+[2026-03-17 01:10:39 CET] Inspecting OpenCode source to confirm plugin loader and logging behavior for US-002
+[2026-03-17 01:16:44 CET] Implemented config parsing, singleton sidecar startup, and plugin initialization hooks for US-002
+[2026-03-17 01:17:12 CET] Verification complete for US-002: bun test, bun run typecheck, bun run build, and bun run test:e2e:real passed

@@ -161,7 +161,7 @@
     {
       "id": "US-001",
       "title": "Scaffold the Bun TypeScript OpenCode plugin project",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [],
       "description": "As a maintainer, I want a clean plugin scaffold with scripts and package installs so that later stories can add behavior without guessing the project shape.",
       "acceptanceCriteria": [
@@ -172,13 +172,13 @@
         "Negative case: if the plugin entrypoint or packaging metadata is missing, build or typecheck fails with a clear actionable error instead of producing a partial plugin."
       ],
       "startedAt": "2026-03-16T23:58:53.499565+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-03-16T23:58:53.499767+00:00"
+      "completedAt": "2026-03-17T00:08:23.817170+00:00",
+      "updatedAt": "2026-03-17T00:08:23.817005+00:00"
     },
     {
       "id": "US-002",
       "title": "Parse config and start the sidecar once per process",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-001"
       ],
@@ -189,7 +189,10 @@
         "Startup and failure logging includes plugin name, bind host, bind port, and sanitized upstream target information when available.",
         "Example: if initialization runs twice in one process, the second call reuses the existing sidecar instance and logs that startup was already completed.",
         "Negative case: invalid numeric config such as a non-numeric port or disallowed host value causes startup to fail clearly and leaves no half-started listener behind."
-      ]
+      ],
+      "startedAt": "2026-03-17T00:08:26.312964+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-03-17T00:08:26.313162+00:00"
     },
     {
       "id": "US-003",

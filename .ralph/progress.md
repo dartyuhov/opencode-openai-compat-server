@@ -186,3 +186,39 @@ Run summary: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralp
   - Useful context
     Using model `release_date` for the OpenAI `created` field keeps `/v1/models` responses stable across cache refreshes when the available models do not change.
 ---
+## [2026-03-17 01:52:59 CET] - US-006: Validate and serialize chat completion requests
+Thread: 
+Run: 20260317-005852-82072 (iteration 6)
+Run log: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralph/runs/run-20260317-005852-82072-iter-6.log
+Run summary: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralph/runs/run-20260317-005852-82072-iter-6.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: fb7c3a2 feat(chat): validate and serialize requests
+- Post-commit status: `clean`
+- Verification:
+  - Command: bun test -> PASS
+  - Command: bun run typecheck -> PASS
+  - Command: bun run build -> PASS
+  - Command: bun run test:e2e:real -> PASS
+- Files changed:
+  - .agents/tasks/prd-openai-compat.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - src/chat.ts
+  - src/index.ts
+  - src/sidecar.ts
+  - test/chat-request.test.ts
+  - test/sidecar-server.test.ts
+- What was implemented
+  - Added a dedicated chat-request preparation module that validates the supported OpenAI chat fields, rejects unsupported top-level and message fields with field-specific 400 errors, resolves `provider/model` ids against the connected provider catalog, and serializes messages into a stable `System` plus transcript prompt format.
+  - Added `POST /v1/chat/completions` handling to the sidecar so invalid JSON bodies still fail through the shared OpenAI error envelope, request validation happens before upstream session work, and unknown models are rejected only after refreshing the live provider catalog.
+  - Added unit coverage for prompt serialization and helper validation plus integration coverage for `stream=true`, multimodal content arrays, unknown models, and valid requests against an unconfigured upstream.
+- **Learnings for future iterations:**
+  - Patterns discovered
+    Keeping chat request preparation in a standalone module makes the eventual execution path reusable while letting the sidecar return OpenAI-like 400s without duplicating validation logic.
+  - Gotchas encountered
+    Validating request structure before checking upstream configuration lets clearly bad client requests fail as 400s even when the sidecar is otherwise unconfigured.
+  - Useful context
+    The prompt serializer should not append a trailing assistant cue, because the final user turn must stay at the end of the serialized transcript for deterministic upstream behavior.
+---

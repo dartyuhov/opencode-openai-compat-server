@@ -36,13 +36,17 @@ const registerServer = (fetchHandler: (request: Request) => Response | Promise<R
   return server;
 };
 
-const startTestSidecar = async (logs: LogEntry[], input?: { apiKey?: string | null; upstreamUrl?: string; modelsCacheTtlMs?: number }) => {
+const startTestSidecar = async (
+  logs: LogEntry[],
+  input?: { apiKey?: string | null; upstreamUrl?: string; requestTimeoutMs?: number; modelsCacheTtlMs?: number },
+) => {
   const runtime = await startSidecarOnce({
     client: createFakeClient(logs),
     rawConfig: {
       host: "127.0.0.1",
       port: 0,
       ...(input?.apiKey !== undefined ? { apiKey: input.apiKey } : {}),
+      ...(input?.requestTimeoutMs !== undefined ? { requestTimeoutMs: input.requestTimeoutMs } : {}),
       ...(input?.modelsCacheTtlMs !== undefined ? { modelsCacheTtlMs: input.modelsCacheTtlMs } : {}),
     },
     ...(input?.upstreamUrl ? { upstreamUrl: new URL(input.upstreamUrl) } : {}),
@@ -637,6 +641,38 @@ describe("sidecar server", () => {
     });
   });
 
+  test("rejects invalid JSON before any upstream work executes", async () => {
+    const logs: LogEntry[] = [];
+    const runtime = await startTestSidecar(logs);
+
+    const response = await fetch(`http://127.0.0.1:${runtime.server.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: "{",
+    });
+    const body = (await response.json()) as Record<string, any>;
+
+    expect(response.status).toBe(400);
+    expect(body).toEqual({
+      error: {
+        message: "Request body must be a valid JSON object.",
+        type: "invalid_request_error",
+        param: null,
+        code: "invalid_json",
+      },
+    });
+
+    const [requestLog] = getRequestLogs(logs);
+    expect(requestLog?.extra).toEqual({
+      method: "POST",
+      route: "/v1/chat/completions",
+      status: 400,
+      failureReason: "invalid_json",
+    });
+  });
+
   test("rejects multimodal content arrays with a field-specific error", async () => {
     const logs: LogEntry[] = [];
     const runtime = await startTestSidecar(logs);
@@ -762,6 +798,60 @@ describe("sidecar server", () => {
       route: "/v1/chat/completions",
       status: 400,
       failureReason: "invalid_model",
+    });
+  });
+
+  test("returns a sanitized 502 when the upstream provider lookup times out", async () => {
+    const observedPaths: string[] = [];
+    const upstream = registerServer(async (request) => {
+      const url = new URL(request.url);
+      observedPaths.push(`${request.method} ${url.pathname}`);
+      await sleep(60);
+
+      return Response.json(buildConnectedOpenAICatalog());
+    });
+    const logs: LogEntry[] = [];
+    const runtime = await startTestSidecar(logs, {
+      upstreamUrl: `http://user:secret@127.0.0.1:${upstream.port}`,
+      requestTimeoutMs: 10,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${runtime.server.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-5.1",
+        messages: [
+          {
+            role: "user",
+            content: "Say hello.",
+          },
+        ],
+      }),
+    });
+    const body = (await response.json()) as Record<string, any>;
+
+    expect(response.status).toBe(502);
+    expect(body).toEqual({
+      error: {
+        message: "OpenCode upstream request timed out.",
+        type: "api_error",
+        param: null,
+        code: "timeout",
+      },
+    });
+    expect(observedPaths).toEqual(["GET /provider"]);
+    expect(JSON.stringify(body)).not.toContain("user");
+    expect(JSON.stringify(body)).not.toContain("secret");
+
+    const [requestLog] = getRequestLogs(logs);
+    expect(requestLog?.extra).toEqual({
+      method: "POST",
+      route: "/v1/chat/completions",
+      status: 502,
+      failureReason: "timeout",
     });
   });
 

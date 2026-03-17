@@ -1,6 +1,7 @@
 # Activity Log
 
 ## Run Summary
+- 2026-03-17 02:00:49 | run=20260317-005852-82072 | iter=7 | mode=build | story=US-007 | duration=431s | status=success
 - 2026-03-17 01:53:35 | run=20260317-005852-82072 | iter=6 | mode=build | story=US-006 | duration=539s | status=success
 - 2026-03-17 01:44:34 | run=20260317-005852-82072 | iter=5 | mode=build | story=US-005 | duration=373s | status=success
 - 2026-03-17 01:38:19 | run=20260317-005852-82072 | iter=4 | mode=build | story=US-004 | duration=411s | status=success
@@ -52,3 +53,8 @@
 [2026-03-17 01:58:32 CET] Implemented US-007 chat completion execution and response mapping with sidecar and upstream parser updates
 [2026-03-17 01:59:16 CET] Verification complete for US-007: bun test, bun run typecheck, bun run build, and bun run test:e2e:real passed
 [2026-03-17 02:00:19 CET] Updated Ralph progress entry for US-007
+[2026-03-17 02:00:48] ITERATION 7 end (duration=431s)
+[2026-03-17 02:00:51] ITERATION 8 start (mode=build story=US-008)
+[2026-03-17 02:01:14 CET] Start US-008 iteration 8: auditing current test coverage and route implementation
+[2026-03-17 02:04:11 CET] Implemented US-008 coverage additions: exported sidecar response/error mappers for unit tests and added invalid JSON/timeout integration cases
+[2026-03-17 02:04:26 CET] Verification complete for US-008: bun test, bun run typecheck, bun run build, and bun run test:e2e:real passed

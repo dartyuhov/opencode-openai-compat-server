@@ -30,7 +30,16 @@ export {
   type ParsedPluginConfig,
   type RawPluginConfig,
 } from "./config.js";
-export { getSidecarRuntimeForTests, resetSidecarForTests, startSidecarOnce, type SidecarRuntime } from "./sidecar.js";
+export {
+  getSidecarRuntimeForTests,
+  mapAssistantMessageToChatCompletion,
+  mapErrorToOpenAIResponse,
+  resetSidecarForTests,
+  startSidecarOnce,
+  type OpenAIChatCompletionResponse,
+  type OpenAIErrorEnvelope,
+  type SidecarRuntime,
+} from "./sidecar.js";
 export { mapProviderCatalogToOpenAIModelList, type OpenAIModel, type OpenAIModelList } from "./models.js";
 export {
   OpenCodeUpstreamClient,

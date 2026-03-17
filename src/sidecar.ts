@@ -64,7 +64,7 @@ type SidecarRouteMatch = {
   handler: (context: SidecarRouteContext) => Promise<Response>;
 };
 
-type OpenAIErrorEnvelope = {
+export type OpenAIErrorEnvelope = {
   error: {
     message: string;
     type: string;
@@ -73,7 +73,7 @@ type OpenAIErrorEnvelope = {
   };
 };
 
-type OpenAIChatCompletionResponse = {
+export type OpenAIChatCompletionResponse = {
   id: string;
   object: "chat.completion";
   created: number;
@@ -266,7 +266,7 @@ const mapUsage = (assistantMessage: UpstreamAssistantMessage): OpenAIChatComplet
   };
 };
 
-const mapAssistantMessageToChatCompletion = (
+export const mapAssistantMessageToChatCompletion = (
   assistantMessage: UpstreamAssistantMessage,
   requestedModel: string,
 ): OpenAIChatCompletionResponse => {
@@ -391,7 +391,7 @@ const createNotFoundError = (request: Request, pathname: string) =>
     failureReason: "not_found",
   });
 
-const normalizeError = (error: unknown): {
+export const mapErrorToOpenAIResponse = (error: unknown): {
   response: Response;
   failureReason: string;
 } => {
@@ -593,7 +593,7 @@ const handleSidecarRequest = async (
     status = response.status;
     return response;
   } catch (error) {
-    const normalized = normalizeError(error);
+    const normalized = mapErrorToOpenAIResponse(error);
     status = normalized.response.status;
     failureReason = normalized.failureReason;
     return normalized.response;

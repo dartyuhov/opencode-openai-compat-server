@@ -46,3 +46,38 @@ Run summary: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralp
   - Useful context
     `files: ["dist"]` is required here because `dist/` is gitignored and would otherwise be omitted from npm package contents.
 ---
+## [2026-03-17 01:17:57 CET] - US-002: Parse config and start the sidecar once per process
+Thread: 
+Run: 20260317-005852-82072 (iteration 2)
+Run log: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralph/runs/run-20260317-005852-82072-iter-2.log
+Run summary: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralph/runs/run-20260317-005852-82072-iter-2.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 9daf3b8 feat(config): start sidecar once per process
+- Post-commit status: `clean`
+- Verification:
+  - Command: bun test -> PASS
+  - Command: bun run typecheck -> PASS
+  - Command: bun run build -> PASS
+  - Command: bun run test:e2e:real -> PASS
+- Files changed:
+  - .agents/tasks/prd-openai-compat.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - src/config.ts
+  - src/index.ts
+  - src/sidecar.ts
+  - test/scaffold.test.ts
+- What was implemented
+  - Added validated startup config parsing with defaults, loopback-only host validation, env-based raw config loading, and sanitized upstream target derivation.
+  - Added a process-wide singleton sidecar startup path that logs startup, reuse, and failure details through the OpenCode client logger and prevents duplicate listeners.
+  - Wired plugin initialization through the plugin `config` hook and added tests covering defaults, invalid config failures, and idempotent startup reuse.
+- **Learnings for future iterations:**
+  - Patterns discovered
+    OpenCode plugin lifecycle work that depends on runtime startup is safest in the `config` hook because the loader invokes it after plugin registration and configuration merge.
+  - Gotchas encountered
+    `Bun.Server` requires an explicit generic in this TypeScript setup, and config parse failures must be logged before listener startup begins.
+  - Useful context
+    Sanitized upstream targets should remove credentials, path, query, and hash so startup logs stay useful without leaking upstream auth material.
+---

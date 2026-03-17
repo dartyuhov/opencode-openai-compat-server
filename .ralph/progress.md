@@ -222,3 +222,38 @@ Run summary: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralp
   - Useful context
     The prompt serializer should not append a trailing assistant cue, because the final user turn must stay at the end of the serialized transcript for deterministic upstream behavior.
 ---
+## [2026-03-17 01:59:57 CET] - US-007: Execute non-streaming chat completions and map responses
+Thread: 
+Run: 20260317-005852-82072 (iteration 7)
+Run log: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralph/runs/run-20260317-005852-82072-iter-7.log
+Run summary: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralph/runs/run-20260317-005852-82072-iter-7.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 8a3c7f0 feat(api): execute chat completions
+- Post-commit status: `clean`
+- Verification:
+  - Command: bun test test/sidecar-server.test.ts test/upstream-client.test.ts -> PASS
+  - Command: bun test -> PASS
+  - Command: bun run typecheck -> PASS
+  - Command: bun run build -> PASS
+  - Command: bun run test:e2e:real -> PASS
+- Files changed:
+  - .agents/tasks/prd-openai-compat.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - src/sidecar.ts
+  - src/upstream.ts
+  - test/sidecar-server.test.ts
+- What was implemented
+  - Replaced the placeholder `/v1/chat/completions` behavior with real upstream execution that validates requests before any catalog/session call, creates a fresh OpenCode session, sends one serialized prompt through the configured agent, and maps the assistant reply into an OpenAI `chat.completion` response.
+  - Added success mapping that concatenates assistant text parts in order, defaults `finish_reason` to `stop` when the upstream omits it, and includes `usage` only when upstream token fields are present and cleanly mappable.
+  - Added integration coverage for successful execution, omitted usage, upstream execution failures, and no-text assistant responses so malformed upstream payloads fail closed with sanitized 502s.
+- **Learnings for future iterations:**
+  - Patterns discovered
+    The upstream assistant payload can treat token metadata as optional without weakening validation of the core assistant identity, timestamps, or parts.
+  - Gotchas encountered
+    `bun run test:e2e:real` must run only after `bun run build` completes; parallelizing them can produce a false packaging failure because the smoke test reads `dist/`.
+  - Useful context
+    Preserving request validation before provider, session, and message calls keeps bad chat-completion inputs on deterministic 400 responses instead of turning them into upstream-dependent failures.
+---

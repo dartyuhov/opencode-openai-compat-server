@@ -81,3 +81,38 @@ Run summary: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralp
   - Useful context
     Sanitized upstream targets should remove credentials, path, query, and hash so startup logs stay useful without leaking upstream auth material.
 ---
+## [2026-03-17 01:30:39 CET] - US-003: Implement the OpenCode upstream client
+Thread: 
+Run: 20260317-005852-82072 (iteration 3)
+Run log: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralph/runs/run-20260317-005852-82072-iter-3.log
+Run summary: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralph/runs/run-20260317-005852-82072-iter-3.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: f0468e0 feat(upstream): add OpenCode upstream client
+- Post-commit status: `clean`
+- Verification:
+  - Command: bun test -> PASS
+  - Command: bun run typecheck -> PASS
+  - Command: bun run build -> PASS
+  - Command: bun run test:e2e:real -> PASS
+- Files changed:
+  - .agents/tasks/prd-openai-compat.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - AGENTS.md
+  - src/index.ts
+  - src/upstream.ts
+  - test/upstream-client.test.ts
+- What was implemented
+  - Added an `OpenCodeUpstreamClient` that wraps `GET /provider`, `POST /session`, and `POST /session/:id/message` with shared request timeouts and optional basic-auth headers derived from config or URL credentials.
+  - Normalized provider, session, and assistant message responses into internal types with strict JSON boundary validation and sanitized `UpstreamClientError` mapping for timeout, network, auth, malformed response, and upstream payload failures.
+  - Added short-lived provider discovery caching keyed by directory with TTL expiry and in-flight request deduplication, plus tests for success paths, cache refresh, HTTP auth failure, payload auth failure, timeout, and network failure.
+- **Learnings for future iterations:**
+  - Patterns discovered
+    Keep upstream JSON validation and error classification inside the client boundary so route handlers work with normalized data and one sanitized error type.
+  - Gotchas encountered
+    `bun run test:e2e:real` must run after `bun run build` completes because the packaging smoke test reads `dist/` directly, and assistant failures can arrive in `info.error` even when the HTTP status is `200`.
+  - Useful context
+    Provider discovery varies by directory, and assistant text for the MVP should concatenate only non-ignored `text` parts while dropping non-text parts from the final text output.
+---

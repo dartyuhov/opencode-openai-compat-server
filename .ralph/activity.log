@@ -23,3 +23,4 @@
 [2026-03-17 01:19:15 CET] Start US-003 audit and implementation
 [2026-03-17 01:28:20 CET] Implemented OpenCode upstream client with provider caching, normalized parsing, and dedicated upstream tests for US-003
 [2026-03-17 01:29:57 CET] Verification complete for US-003: bun test, bun run typecheck, bun run build, and bun run test:e2e:real passed
+[2026-03-17 01:30:54 CET] Updated Ralph progress entry for US-003

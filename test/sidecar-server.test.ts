@@ -552,6 +552,232 @@ describe("sidecar server", () => {
     });
   });
 
+  test("rejects stream=true before any upstream catalog lookup", async () => {
+    let providerRequests = 0;
+    const upstream = registerServer(() => {
+      providerRequests += 1;
+
+      return Response.json({
+        all: [],
+        default: {},
+        connected: [],
+      });
+    });
+    const logs: LogEntry[] = [];
+    const runtime = await startTestSidecar(logs, {
+      upstreamUrl: `http://127.0.0.1:${upstream.port}`,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${runtime.server.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-5.1",
+        stream: true,
+        messages: [
+          {
+            role: "user",
+            content: "Say hello.",
+          },
+        ],
+      }),
+    });
+    const body = (await response.json()) as Record<string, any>;
+
+    expect(response.status).toBe(400);
+    expect(body).toEqual({
+      error: {
+        message: "Invalid value for 'stream': only false or omitted is supported.",
+        type: "invalid_request_error",
+        param: "stream",
+        code: "unsupported_stream",
+      },
+    });
+    expect(providerRequests).toBe(0);
+
+    const [requestLog] = getRequestLogs(logs);
+    expect(requestLog?.extra).toEqual({
+      method: "POST",
+      route: "/v1/chat/completions",
+      status: 400,
+      failureReason: "unsupported_stream",
+    });
+  });
+
+  test("rejects multimodal content arrays with a field-specific error", async () => {
+    const logs: LogEntry[] = [];
+    const runtime = await startTestSidecar(logs);
+
+    const response = await fetch(`http://127.0.0.1:${runtime.server.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-5.1",
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "Say hello.",
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    const body = (await response.json()) as Record<string, any>;
+
+    expect(response.status).toBe(400);
+    expect(body).toEqual({
+      error: {
+        message: "Invalid value for 'messages[0].content': content arrays are not supported.",
+        type: "invalid_request_error",
+        param: "messages[0].content",
+        code: "unsupported_content",
+      },
+    });
+
+    const [requestLog] = getRequestLogs(logs);
+    expect(requestLog?.extra).toEqual({
+      method: "POST",
+      route: "/v1/chat/completions",
+      status: 400,
+      failureReason: "unsupported_content",
+    });
+  });
+
+  test("rejects unknown models after checking the connected provider catalog", async () => {
+    const observedPaths: string[] = [];
+    const upstream = registerServer((request) => {
+      const url = new URL(request.url);
+      observedPaths.push(url.pathname);
+
+      if (url.pathname !== "/provider") {
+        return new Response("Not found", { status: 404 });
+      }
+
+      return Response.json({
+        all: [
+          {
+            id: "openai",
+            name: "OpenAI",
+            api: "chat",
+            env: ["OPENAI_API_KEY"],
+            models: {
+              "gpt-5.1": {
+                id: "gpt-5.1",
+                name: "GPT 5.1",
+                release_date: "2026-01-01",
+                attachment: true,
+                reasoning: true,
+                temperature: true,
+                tool_call: true,
+                limit: {
+                  context: 200000,
+                  output: 16384,
+                },
+                options: {},
+              },
+            },
+          },
+        ],
+        default: {
+          openai: "gpt-5.1",
+        },
+        connected: ["openai"],
+      });
+    });
+    const logs: LogEntry[] = [];
+    const runtime = await startTestSidecar(logs, {
+      upstreamUrl: `http://127.0.0.1:${upstream.port}`,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${runtime.server.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-5.1-mini",
+        messages: [
+          {
+            role: "user",
+            content: "Say hello.",
+          },
+        ],
+      }),
+    });
+    const body = (await response.json()) as Record<string, any>;
+
+    expect(response.status).toBe(400);
+    expect(body).toEqual({
+      error: {
+        message: "Invalid value for 'model': model 'openai/gpt-5.1-mini' is not available from the current connected catalog.",
+        type: "invalid_request_error",
+        param: "model",
+        code: "invalid_model",
+      },
+    });
+    expect(observedPaths).toEqual(["/provider"]);
+
+    const [requestLog] = getRequestLogs(logs);
+    expect(requestLog?.extra).toEqual({
+      method: "POST",
+      route: "/v1/chat/completions",
+      status: 400,
+      failureReason: "invalid_model",
+    });
+  });
+
+  test("returns a sanitized 502 for valid requests when the upstream is unconfigured", async () => {
+    const logs: LogEntry[] = [];
+    const runtime = await startTestSidecar(logs);
+
+    const response = await fetch(`http://127.0.0.1:${runtime.server.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-5.1",
+        messages: [
+          {
+            role: "system",
+            content: "You are concise.",
+          },
+          {
+            role: "user",
+            content: "Say hello in one sentence.",
+          },
+        ],
+      }),
+    });
+    const body = (await response.json()) as Record<string, any>;
+
+    expect(response.status).toBe(502);
+    expect(body).toEqual({
+      error: {
+        message: "OpenCode upstream is not configured.",
+        type: "api_error",
+        param: null,
+        code: "upstream_unconfigured",
+      },
+    });
+
+    const [requestLog] = getRequestLogs(logs);
+    expect(requestLog?.extra).toEqual({
+      method: "POST",
+      route: "/v1/chat/completions",
+      status: 502,
+      failureReason: "upstream_unconfigured",
+    });
+  });
+
   test("returns OpenAI-like errors for unsupported routes", async () => {
     const logs: LogEntry[] = [];
     const runtime = await startTestSidecar(logs);

@@ -2,6 +2,18 @@ import type { Plugin } from "@opencode-ai/plugin";
 import { startSidecarOnce } from "./sidecar.js";
 
 export {
+  ChatCompletionValidationError,
+  parseChatCompletionRequest,
+  prepareChatCompletionRequest,
+  resolveChatCompletionModel,
+  serializeChatCompletionMessages,
+  type OpenAIChatCompletionRequest,
+  type OpenAIChatMessage,
+  type OpenAIChatMessageRole,
+  type PreparedChatCompletionRequest,
+  type ResolvedChatCompletionModel,
+} from "./chat.js";
+export {
   ALLOWED_PLUGIN_HOSTS,
   DEFAULT_PLUGIN_CONFIG,
   PLUGIN_ENV_PREFIX,

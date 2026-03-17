@@ -1,6 +1,7 @@
 # Activity Log
 
 ## Run Summary
+- 2026-03-17 01:44:34 | run=20260317-005852-82072 | iter=5 | mode=build | story=US-005 | duration=373s | status=success
 - 2026-03-17 01:38:19 | run=20260317-005852-82072 | iter=4 | mode=build | story=US-004 | duration=411s | status=success
 - 2026-03-17 01:31:24 | run=20260317-005852-82072 | iter=3 | mode=build | story=US-003 | duration=742s | status=success
 - 2026-03-17 01:19:00 | run=20260317-005852-82072 | iter=2 | mode=build | story=US-002 | duration=633s | status=success
@@ -38,3 +39,8 @@
 [2026-03-17 01:42:34 CET] Implemented US-005 model mapper and GET /v1/models route with cache-aware model listing tests
 [2026-03-17 01:43:02 CET] Verification complete for US-005: bun test, bun run typecheck, bun run build, and bun run test:e2e:real passed
 [2026-03-17 01:44:04 CET] Updated Ralph progress entry for US-005
+[2026-03-17 01:44:34] ITERATION 5 end (duration=373s)
+[2026-03-17 01:44:37] ITERATION 6 start (mode=build story=US-006)
+[2026-03-17 01:44:58 CET] Start US-006 work: auditing chat completions validation and prompt serialization
+[2026-03-17 01:51:17 CET] Implemented US-006 chat validation, model resolution, and prompt serialization helpers with sidecar route coverage
+[2026-03-17 01:51:57 CET] Verification complete for US-006: bun test, bun run typecheck, bun run build, and bun run test:e2e:real passed

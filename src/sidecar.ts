@@ -2,6 +2,12 @@ import type { PluginInput } from "@opencode-ai/plugin";
 import { timingSafeEqual } from "node:crypto";
 
 import {
+  ChatCompletionValidationError,
+  parseChatCompletionRequest,
+  resolveChatCompletionModel,
+  serializeChatCompletionMessages,
+} from "./chat.js";
+import {
   describeStartupAttempt,
   parsePluginConfig,
   readPluginConfigFromEnv,
@@ -278,6 +284,13 @@ const resolveRoute = (request: Request, url: URL): SidecarRouteMatch | null => {
     };
   }
 
+  if (request.method === "POST" && url.pathname === "/v1/chat/completions") {
+    return {
+      route: "/v1/chat/completions",
+      handler: handleChatCompletionsRequest,
+    };
+  }
+
   return null;
 };
 
@@ -299,6 +312,18 @@ const normalizeError = (error: unknown): {
         status: error.status,
         message: error.message,
         type: error.type,
+        param: error.param,
+        code: error.code,
+      }),
+      failureReason: error.failureReason,
+    };
+  }
+
+  if (error instanceof ChatCompletionValidationError) {
+    return {
+      response: createOpenAIErrorResponse({
+        status: 400,
+        message: error.message,
         param: error.param,
         code: error.code,
       }),
@@ -417,6 +442,34 @@ const handleModelsRequest = async (context: SidecarRouteContext) => {
       endpoint: "/provider",
     });
   }
+};
+
+const handleChatCompletionsRequest = async (context: SidecarRouteContext) => {
+  const requestBody = await readJsonRequest<unknown>(context.request);
+  const parsedRequest = parseChatCompletionRequest(requestBody);
+
+  if (!context.runtime.upstreamClient) {
+    throw new SidecarHttpError({
+      status: 502,
+      message: "OpenCode upstream is not configured.",
+      type: "api_error",
+      code: "upstream_unconfigured",
+      failureReason: "upstream_unconfigured",
+    });
+  }
+
+  const catalog = await context.runtime.upstreamClient.getProviderCatalog();
+
+  resolveChatCompletionModel(parsedRequest.model, catalog);
+  serializeChatCompletionMessages(parsedRequest.messages);
+
+  throw new SidecarHttpError({
+    status: 501,
+    message: "Chat completions execution is not implemented yet.",
+    type: "server_error",
+    code: "not_implemented",
+    failureReason: "not_implemented",
+  });
 };
 
 const handleSidecarRequest = async (

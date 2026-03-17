@@ -236,7 +236,7 @@
     {
       "id": "US-005",
       "title": "Expose connected models at GET /v1/models",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-003",
         "US-004"
@@ -250,13 +250,13 @@
         "Negative case: malformed provider metadata or an upstream failure returns a sanitized 502 error envelope instead of partial, stale, or invented model data."
       ],
       "startedAt": "2026-03-17T00:38:21.260156+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-03-17T00:38:21.260420+00:00"
+      "completedAt": "2026-03-17T00:44:34.828792+00:00",
+      "updatedAt": "2026-03-17T00:44:34.828577+00:00"
     },
     {
       "id": "US-006",
       "title": "Validate and serialize chat completion requests",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-005"
       ],
@@ -267,7 +267,10 @@
         "Serialize messages into a deterministic prompt format with a System section when present and a chronological transcript that preserves the final user turn at the end.",
         "Example: system, user, assistant, and user messages are converted into one stable text prompt that keeps the last user instruction as the final section.",
         "Negative case: stream=true, empty messages, unknown provider/model, or multimodal content arrays return a 400 OpenAI-like invalid request response naming the bad field."
-      ]
+      ],
+      "startedAt": "2026-03-17T00:44:36.955754+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-03-17T00:44:36.955948+00:00"
     },
     {
       "id": "US-007",

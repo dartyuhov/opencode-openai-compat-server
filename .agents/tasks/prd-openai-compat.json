@@ -178,7 +178,7 @@
     {
       "id": "US-002",
       "title": "Parse config and start the sidecar once per process",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-001"
       ],
@@ -191,13 +191,13 @@
         "Negative case: invalid numeric config such as a non-numeric port or disallowed host value causes startup to fail clearly and leaves no half-started listener behind."
       ],
       "startedAt": "2026-03-17T00:08:26.312964+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-03-17T00:08:26.313162+00:00"
+      "completedAt": "2026-03-17T00:19:00.169229+00:00",
+      "updatedAt": "2026-03-17T00:19:00.169056+00:00"
     },
     {
       "id": "US-003",
       "title": "Implement the OpenCode upstream client",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-002"
       ],
@@ -208,7 +208,10 @@
         "Implement short-lived model discovery caching that respects modelsCacheTtlMs and refreshes after expiry.",
         "Example: with a reachable upstream and valid credentials, the client returns normalized provider, session, and assistant message data to callers.",
         "Negative case: upstream timeout, network failure, or auth failure is converted into a sanitized internal error that does not leak credentials or raw upstream stack traces."
-      ]
+      ],
+      "startedAt": "2026-03-17T00:19:02.285773+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-03-17T00:19:02.285971+00:00"
     },
     {
       "id": "US-004",

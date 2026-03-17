@@ -11,4 +11,5 @@
 ## Project Notes
 
 - `scripts/check-plugin-packaging.ts` fails fast when `src/index.ts` or the npm export metadata is missing.
+- Run `bun run build` to completion before `bun run test:e2e:real`; the packaging smoke test reads `dist/` and can fail if the build is still running.
 - Use `./ralph log "message"` to append activity entries to `.ralph/activity.log`.

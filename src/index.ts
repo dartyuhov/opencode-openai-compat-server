@@ -19,6 +19,25 @@ export {
   type RawPluginConfig,
 } from "./config.js";
 export { getSidecarRuntimeForTests, resetSidecarForTests, startSidecarOnce, type SidecarRuntime } from "./sidecar.js";
+export {
+  OpenCodeUpstreamClient,
+  UpstreamClientError,
+  isUpstreamClientError,
+  type CreateUpstreamAssistantMessageInput,
+  type CreateUpstreamSessionInput,
+  type OpenCodeUpstreamClientOptions,
+  type UpstreamAssistantMessage,
+  type UpstreamAssistantMessagePart,
+  type UpstreamClientErrorCode,
+  type UpstreamModel,
+  type UpstreamModelCost,
+  type UpstreamModelStatus,
+  type UpstreamModality,
+  type UpstreamProvider,
+  type UpstreamProviderCatalog,
+  type UpstreamProviderCatalogRequest,
+  type UpstreamSession,
+} from "./upstream.js";
 
 export const OpenCodeOpenAICompatPlugin: Plugin = async (input) => {
   return {

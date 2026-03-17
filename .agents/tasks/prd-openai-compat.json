@@ -294,7 +294,7 @@
     {
       "id": "US-008",
       "title": "Add automated unit and integration coverage",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-005",
         "US-007"
@@ -308,13 +308,13 @@
         "bun test, bun run typecheck, and bun run build all pass before the project is considered ready for real end-to-end verification."
       ],
       "startedAt": "2026-03-17T01:00:51.485236+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-03-17T01:00:51.485419+00:00"
+      "completedAt": "2026-03-17T01:05:34.214813+00:00",
+      "updatedAt": "2026-03-17T01:05:34.214624+00:00"
     },
     {
       "id": "US-009",
       "title": "Verify the plugin against a real OpenCode instance",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-008"
       ],
@@ -325,7 +325,10 @@
         "Example: selecting a model returned by GET /v1/models and sending a real non-streaming chat request returns OpenAI-compatible assistant text from a live OpenCode instance.",
         "Negative case: no connected providers or unreachable upstream produces a readable failure response and confirms that no fake models are advertised.",
         "The MVP is not complete until `bun run test:e2e:real` succeeds against a real OpenCode instance."
-      ]
+      ],
+      "startedAt": "2026-03-17T01:05:36.362064+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-03-17T01:05:36.362283+00:00"
     }
   ]
 }

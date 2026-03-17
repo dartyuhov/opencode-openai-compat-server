@@ -165,6 +165,214 @@ describe("OpenCodeUpstreamClient", () => {
     expect(observedDirectories).toEqual(["/workspace/demo", "/workspace/demo"]);
   });
 
+  test("parses the current OpenCode provider schema with capabilities metadata", async () => {
+    const server = registerServer((request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname !== "/provider") {
+        return new Response("Not found", { status: 404 });
+      }
+
+      return Response.json({
+        all: [
+          {
+            id: "opencode",
+            name: "OpenCode",
+            source: "api",
+            env: ["OPENCODE_API_KEY"],
+            key: "provider-key",
+            options: {},
+            models: {
+              "big-pickle": {
+                id: "big-pickle",
+                providerID: "opencode",
+                name: "Big Pickle",
+                family: "pickle",
+                api: {
+                  id: "big-pickle",
+                  url: "https://opencode.ai/zen/v1",
+                  npm: "@ai-sdk/openai-compatible",
+                },
+                status: "active",
+                headers: {},
+                options: {},
+                cost: {
+                  input: 0,
+                  output: 0,
+                  cache: {
+                    read: 0,
+                    write: 0,
+                  },
+                },
+                limit: {
+                  context: 1_000_000,
+                  input: 256_000,
+                  output: 128_000,
+                },
+                capabilities: {
+                  temperature: true,
+                  reasoning: true,
+                  attachment: false,
+                  toolcall: true,
+                  input: {
+                    text: true,
+                    audio: false,
+                    image: false,
+                    video: false,
+                    pdf: false,
+                  },
+                  output: {
+                    text: true,
+                    audio: false,
+                    image: false,
+                    video: false,
+                    pdf: false,
+                  },
+                  interleaved: {
+                    field: "reasoning_content",
+                  },
+                },
+                release_date: "2026-03-11",
+                variants: {
+                  low: {
+                    reasoningEffort: "low",
+                  },
+                },
+              },
+            },
+          },
+        ],
+        default: {
+          opencode: "big-pickle",
+        },
+        connected: ["opencode"],
+      });
+    });
+
+    const client = new OpenCodeUpstreamClient({
+      baseUrl: buildBaseUrl(server),
+      requestTimeoutMs: 500,
+      modelsCacheTtlMs: 100,
+    });
+
+    const catalog = await client.getProviderCatalog();
+
+    expect(catalog.providers).toEqual([
+      {
+        id: "opencode",
+        name: "OpenCode",
+        api: null,
+        env: ["OPENCODE_API_KEY"],
+        npm: null,
+        connected: true,
+        defaultModelId: "big-pickle",
+        models: [
+          {
+            id: "big-pickle",
+            name: "Big Pickle",
+            releaseDate: "2026-03-11",
+            attachment: false,
+            reasoning: true,
+            temperature: true,
+            toolCall: true,
+            limit: {
+              context: 1_000_000,
+              output: 128_000,
+            },
+            cost: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              contextOver200k: null,
+            },
+            modalities: {
+              input: ["text"],
+              output: ["text"],
+            },
+            experimental: false,
+            status: "active",
+            options: {},
+            headers: {},
+            providerPackageName: "@ai-sdk/openai-compatible",
+          },
+        ],
+      },
+    ]);
+  });
+
+  test("ignores malformed model payloads from disconnected providers", async () => {
+    const server = registerServer((request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname !== "/provider") {
+        return new Response("Not found", { status: 404 });
+      }
+
+      return Response.json({
+        all: [
+          {
+            id: "openai",
+            name: "OpenAI",
+            env: ["OPENAI_API_KEY"],
+            models: {
+              "gpt-5.1": {
+                id: "gpt-5.1",
+                name: "GPT 5.1",
+                release_date: "2026-01-01",
+                attachment: true,
+                reasoning: true,
+                temperature: true,
+                tool_call: true,
+                limit: {
+                  context: 200000,
+                  output: 16384,
+                },
+                options: {},
+              },
+            },
+          },
+          {
+            id: "disconnected-provider",
+            name: "Disconnected",
+            env: [],
+            models: {
+              broken: {
+                unexpected: true,
+              },
+            },
+          },
+        ],
+        default: {
+          openai: "gpt-5.1",
+        },
+        connected: ["openai"],
+      });
+    });
+
+    const client = new OpenCodeUpstreamClient({
+      baseUrl: buildBaseUrl(server),
+      requestTimeoutMs: 500,
+      modelsCacheTtlMs: 100,
+    });
+
+    const catalog = await client.getProviderCatalog();
+
+    expect(catalog.providers).toHaveLength(2);
+    expect(catalog.providers[0]?.connected).toBe(true);
+    expect(catalog.providers[0]?.models).toHaveLength(1);
+    expect(catalog.providers[1]).toEqual({
+      id: "disconnected-provider",
+      name: "Disconnected",
+      api: null,
+      env: [],
+      npm: null,
+      connected: false,
+      defaultModelId: null,
+      models: [],
+    });
+  });
+
   test("creates sessions and normalizes assistant message text", async () => {
     let createSessionBody: unknown;
     let createMessageBody: unknown;

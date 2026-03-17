@@ -1,6 +1,7 @@
 # Activity Log
 
 ## Run Summary
+- 2026-03-17 02:05:34 | run=20260317-005852-82072 | iter=8 | mode=build | story=US-008 | duration=282s | status=success
 - 2026-03-17 02:00:49 | run=20260317-005852-82072 | iter=7 | mode=build | story=US-007 | duration=431s | status=success
 - 2026-03-17 01:53:35 | run=20260317-005852-82072 | iter=6 | mode=build | story=US-006 | duration=539s | status=success
 - 2026-03-17 01:44:34 | run=20260317-005852-82072 | iter=5 | mode=build | story=US-005 | duration=373s | status=success
@@ -59,3 +60,8 @@
 [2026-03-17 02:04:11 CET] Implemented US-008 coverage additions: exported sidecar response/error mappers for unit tests and added invalid JSON/timeout integration cases
 [2026-03-17 02:04:26 CET] Verification complete for US-008: bun test, bun run typecheck, bun run build, and bun run test:e2e:real passed
 [2026-03-17 02:05:16 CET] Updated Ralph progress entry for US-008
+[2026-03-17 02:05:33] ITERATION 8 end (duration=282s)
+[2026-03-17 02:05:36] ITERATION 9 start (mode=build story=US-009)
+[2026-03-17 02:05:48 CET] Start US-009 audit and context loading
+[2026-03-17 02:14:19 CET] Implemented US-009 real verification flow: updated upstream parser for current OpenCode payloads, replaced packaging-only e2e script with live sidecar verification, and added README/AGENTS guidance
+[2026-03-17 02:20:10 CET] Verification complete for US-009: bun test, bun run typecheck, bun run build, and bun run test:e2e:real passed against a real OpenCode instance

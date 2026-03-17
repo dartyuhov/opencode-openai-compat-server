@@ -1,5 +1,5 @@
 const ALLOWED_MODALITIES = ["text", "audio", "image", "video", "pdf"] as const;
-const ALLOWED_MODEL_STATUSES = ["alpha", "beta", "deprecated"] as const;
+const ALLOWED_MODEL_STATUSES = ["alpha", "beta", "deprecated", "active"] as const;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -587,13 +587,24 @@ const parseJsonBody = (value: string) => {
 
 const parseModelCost = (value: unknown, context: string): UpstreamModelCost => {
   const record = expectRecord(value, context);
-  const nestedContextCost = record.context_over_200k;
+  const nestedContextCost = record.context_over_200k ?? record.experimentalOver200K;
+  const cache = record.cache == null ? null : expectRecord(record.cache, `${context}.cache`);
 
   return {
     input: expectNumber(record.input, `${context}.input`),
     output: expectNumber(record.output, `${context}.output`),
-    cacheRead: record.cache_read == null ? null : expectNumber(record.cache_read, `${context}.cache_read`),
-    cacheWrite: record.cache_write == null ? null : expectNumber(record.cache_write, `${context}.cache_write`),
+    cacheRead:
+      cache == null
+        ? record.cache_read == null
+          ? null
+          : expectNumber(record.cache_read, `${context}.cache_read`)
+        : expectNumber(cache.read, `${context}.cache.read`),
+    cacheWrite:
+      cache == null
+        ? record.cache_write == null
+          ? null
+          : expectNumber(record.cache_write, `${context}.cache_write`)
+        : expectNumber(cache.write, `${context}.cache.write`),
     contextOver200k:
       nestedContextCost == null ? null : parseModelCost(nestedContextCost, `${context}.context_over_200k`),
   };
@@ -619,11 +630,62 @@ const parseModelStatus = (value: unknown, context: string): UpstreamModelStatus 
   return status as UpstreamModelStatus;
 };
 
+const parseCapabilityModalities = (value: unknown, context: string) => {
+  const record = expectRecord(value, context);
+
+  return ALLOWED_MODALITIES.filter((modality) => {
+    const entry = record[modality];
+    return entry == null ? false : expectBoolean(entry, `${context}.${modality}`);
+  });
+};
+
+const parseModelModalities = (record: JsonRecord, context: string) => {
+  if (record.modalities != null) {
+    const modalities = expectRecord(record.modalities, `${context}.modalities`);
+
+    return {
+      input: expectArray(modalities.input, `${context}.modalities.input`).map((entry, index) =>
+        parseModality(entry, `${context}.modalities.input[${index}]`),
+      ),
+      output: expectArray(modalities.output, `${context}.modalities.output`).map((entry, index) =>
+        parseModality(entry, `${context}.modalities.output[${index}]`),
+      ),
+    };
+  }
+
+  if (record.capabilities != null) {
+    const capabilities = expectRecord(record.capabilities, `${context}.capabilities`);
+
+    return {
+      input: parseCapabilityModalities(capabilities.input, `${context}.capabilities.input`),
+      output: parseCapabilityModalities(capabilities.output, `${context}.capabilities.output`),
+    };
+  }
+
+  return null;
+};
+
+const parseModelCapabilityFlag = (
+  record: JsonRecord,
+  input: {
+    currentField: string;
+    legacyField: string;
+    context: string;
+  },
+) => {
+  if (record.capabilities != null) {
+    const capabilities = expectRecord(record.capabilities, `${input.context}.capabilities`);
+    return expectBoolean(capabilities[input.currentField], `${input.context}.capabilities.${input.currentField}`);
+  }
+
+  return expectBoolean(record[input.legacyField], `${input.context}.${input.legacyField}`);
+};
+
 const parseProviderModel = (value: unknown, context: string): UpstreamModel => {
   const record = expectRecord(value, context);
   const limit = expectRecord(record.limit, `${context}.limit`);
-  const modalities = record.modalities == null ? null : expectRecord(record.modalities, `${context}.modalities`);
   const provider = record.provider == null ? null : expectRecord(record.provider, `${context}.provider`);
+  const api = record.api == null ? null : expectRecord(record.api, `${context}.api`);
   const options = expectRecord(record.options, `${context}.options`);
   const headers = record.headers == null ? {} : expectStringRecord(record.headers, `${context}.headers`);
 
@@ -631,31 +693,39 @@ const parseProviderModel = (value: unknown, context: string): UpstreamModel => {
     id: expectString(record.id, `${context}.id`),
     name: expectString(record.name, `${context}.name`),
     releaseDate: expectString(record.release_date, `${context}.release_date`),
-    attachment: expectBoolean(record.attachment, `${context}.attachment`),
-    reasoning: expectBoolean(record.reasoning, `${context}.reasoning`),
-    temperature: expectBoolean(record.temperature, `${context}.temperature`),
-    toolCall: expectBoolean(record.tool_call, `${context}.tool_call`),
+    attachment: parseModelCapabilityFlag(record, {
+      currentField: "attachment",
+      legacyField: "attachment",
+      context,
+    }),
+    reasoning: parseModelCapabilityFlag(record, {
+      currentField: "reasoning",
+      legacyField: "reasoning",
+      context,
+    }),
+    temperature: parseModelCapabilityFlag(record, {
+      currentField: "temperature",
+      legacyField: "temperature",
+      context,
+    }),
+    toolCall: parseModelCapabilityFlag(record, {
+      currentField: "toolcall",
+      legacyField: "tool_call",
+      context,
+    }),
     limit: {
       context: expectNumber(limit.context, `${context}.limit.context`),
       output: expectNumber(limit.output, `${context}.limit.output`),
     },
     cost: record.cost == null ? null : parseModelCost(record.cost, `${context}.cost`),
-    modalities:
-      modalities == null
-        ? null
-        : {
-            input: expectArray(modalities.input, `${context}.modalities.input`).map((entry, index) =>
-              parseModality(entry, `${context}.modalities.input[${index}]`),
-            ),
-            output: expectArray(modalities.output, `${context}.modalities.output`).map((entry, index) =>
-              parseModality(entry, `${context}.modalities.output[${index}]`),
-            ),
-          },
+    modalities: parseModelModalities(record, context),
     experimental: record.experimental == null ? false : expectBoolean(record.experimental, `${context}.experimental`),
     status: record.status == null ? null : parseModelStatus(record.status, `${context}.status`),
     options,
     headers,
-    providerPackageName: provider == null ? null : expectOptionalString(provider.npm, `${context}.provider.npm`),
+    providerPackageName:
+      (api == null ? null : expectOptionalString(api.npm, `${context}.api.npm`)) ??
+      (provider == null ? null : expectOptionalString(provider.npm, `${context}.provider.npm`)),
   };
 };
 
@@ -671,19 +741,25 @@ const parseProviderCatalog = (value: unknown, fetchedAt: number): UpstreamProvid
     providers: providers.map((entry, index) => {
       const provider = expectRecord(entry, `provider catalog.all[${index}]`);
       const models = expectRecord(provider.models, `provider catalog.all[${index}].models`);
+      const providerId = expectString(provider.id, `provider catalog.all[${index}].id`);
+      const isConnected = connected.has(providerId);
 
       return {
-        id: expectString(provider.id, `provider catalog.all[${index}].id`),
+        id: providerId,
         name: expectString(provider.name, `provider catalog.all[${index}].name`),
         api: expectOptionalString(provider.api, `provider catalog.all[${index}].api`),
         env: expectStringArray(provider.env, `provider catalog.all[${index}].env`),
         npm: expectOptionalString(provider.npm, `provider catalog.all[${index}].npm`),
-        connected: connected.has(expectString(provider.id, `provider catalog.all[${index}].id`)),
-        defaultModelId:
-          defaultModelsByProvider[expectString(provider.id, `provider catalog.all[${index}].id`)] ?? null,
-        models: Object.entries(models).map(([modelKey, modelValue]) =>
-          parseProviderModel(modelValue, `provider catalog.all[${index}].models.${modelKey}`),
-        ),
+        connected: isConnected,
+        defaultModelId: defaultModelsByProvider[providerId] ?? null,
+        // Disconnected providers are never advertised by the sidecar, so we can
+        // skip their model normalization and avoid failing closed on irrelevant
+        // upstream schema drift.
+        models: isConnected
+          ? Object.entries(models).map(([modelKey, modelValue]) =>
+              parseProviderModel(modelValue, `provider catalog.all[${index}].models.${modelKey}`),
+            )
+          : [],
       };
     }),
   };

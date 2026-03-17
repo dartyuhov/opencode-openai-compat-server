@@ -12,4 +12,5 @@
 
 - `scripts/check-plugin-packaging.ts` fails fast when `src/index.ts` or the npm export metadata is missing.
 - Run `bun run build` to completion before `bun run test:e2e:real`; the packaging smoke test reads `dist/` and can fail if the build is still running.
+- `bun run test:e2e:real` auto-starts `opencode serve` when `opencode` is on `PATH`; set `OPENCODE_REAL_UPSTREAM_URL` to reuse an existing server and `OPENCODE_REAL_MODEL` to pin the live verification model.
 - Use `./ralph log "message"` to append activity entries to `.ralph/activity.log`.

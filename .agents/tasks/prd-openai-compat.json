@@ -197,7 +197,7 @@
     {
       "id": "US-003",
       "title": "Implement the OpenCode upstream client",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-002"
       ],
@@ -210,13 +210,13 @@
         "Negative case: upstream timeout, network failure, or auth failure is converted into a sanitized internal error that does not leak credentials or raw upstream stack traces."
       ],
       "startedAt": "2026-03-17T00:19:02.285773+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-03-17T00:19:02.285971+00:00"
+      "completedAt": "2026-03-17T00:31:25.026463+00:00",
+      "updatedAt": "2026-03-17T00:31:25.026013+00:00"
     },
     {
       "id": "US-004",
       "title": "Stand up the sidecar server and health route",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-002",
         "US-003"
@@ -228,7 +228,10 @@
         "Request logging records method, route, status, and failure reason without logging prompts, completions, tokens, or credentials.",
         "Example: GET /health on the default configuration returns a 200 JSON response showing the sidecar is healthy on 127.0.0.1:4097.",
         "Negative case: when apiKey is configured and the client omits or sends the wrong bearer token, the route returns a 401 OpenAI-like error response and no handler logic executes."
-      ]
+      ],
+      "startedAt": "2026-03-17T00:31:27.162269+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-03-17T00:31:27.162443+00:00"
     },
     {
       "id": "US-005",

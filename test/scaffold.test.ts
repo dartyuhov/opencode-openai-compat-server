@@ -199,7 +199,8 @@ describe("plugin startup", () => {
       },
     });
 
-    expect(logs[2]).toMatchObject({
+    const reuseLog = logs.find((entry) => entry.message === "Sidecar startup already completed; reusing the existing listener.");
+    expect(reuseLog).toMatchObject({
       service: PLUGIN_PACKAGE_NAME,
       level: "info",
       message: "Sidecar startup already completed; reusing the existing listener.",

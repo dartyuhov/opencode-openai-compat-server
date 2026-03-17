@@ -150,3 +150,39 @@ Run summary: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralp
   - Useful context
     Comparing the configured bearer token with `timingSafeEqual` and logging only route metadata keeps auth failures and request traces useful without leaking credentials or request content.
 ---
+## [2026-03-17 01:43:48 CET] - US-005: Expose connected models at GET /v1/models
+Thread: 
+Run: 20260317-005852-82072 (iteration 5)
+Run log: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralph/runs/run-20260317-005852-82072-iter-5.log
+Run summary: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralph/runs/run-20260317-005852-82072-iter-5.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: a37018a feat(models): add connected /v1/models route
+- Post-commit status: `clean`
+- Verification:
+  - Command: bun test -> PASS
+  - Command: bun run typecheck -> PASS
+  - Command: bun run build -> PASS
+  - Command: bun run test:e2e:real -> PASS
+- Files changed:
+  - .agents/tasks/prd-openai-compat.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - src/index.ts
+  - src/models.ts
+  - src/sidecar.ts
+  - test/model-list.test.ts
+  - test/sidecar-server.test.ts
+- What was implemented
+  - Added a dedicated model-list mapper that filters connected providers, skips connected providers with zero models, flattens provider catalogs into stable `provider/model` ids, and emits an OpenAI-style `{ object: "list", data: [...] }` payload.
+  - Added `GET /v1/models` to the sidecar so it reuses the upstream provider cache while fresh, refreshes on expiry, and returns a sanitized 502 envelope instead of stale model data when refreshed provider metadata is malformed.
+  - Added unit coverage for provider filtering and integration coverage for route output, cache reuse, cache refresh, and malformed refreshed metadata handling.
+- **Learnings for future iterations:**
+  - Patterns discovered
+    A small dedicated mapper keeps route handlers thin and makes OpenAI-shape assertions easy to unit test independently from the upstream client.
+  - Gotchas encountered
+    If a refreshed provider catalog is invalid, the route must fail closed with a sanitized 502 rather than falling back to the last expired cache entry.
+  - Useful context
+    Using model `release_date` for the OpenAI `created` field keeps `/v1/models` responses stable across cache refreshes when the available models do not change.
+---

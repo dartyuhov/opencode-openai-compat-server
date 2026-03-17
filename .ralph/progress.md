@@ -257,3 +257,38 @@ Run summary: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralp
   - Useful context
     Preserving request validation before provider, session, and message calls keeps bad chat-completion inputs on deterministic 400 responses instead of turning them into upstream-dependent failures.
 ---
+## [2026-03-17 02:05:02 CET] - US-008: Add automated unit and integration coverage
+Thread: 
+Run: 20260317-005852-82072 (iteration 8)
+Run log: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralph/runs/run-20260317-005852-82072-iter-8.log
+Run summary: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralph/runs/run-20260317-005852-82072-iter-8.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 685a1bd test(sidecar): add mapper and timeout coverage
+- Post-commit status: `clean`
+- Verification:
+  - Command: bun test -> PASS
+  - Command: bun run typecheck -> PASS
+  - Command: bun run build -> PASS
+  - Command: bun run test:e2e:real -> PASS
+- Files changed:
+  - .agents/tasks/prd-openai-compat.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - src/index.ts
+  - src/sidecar.ts
+  - test/sidecar-mappers.test.ts
+  - test/sidecar-server.test.ts
+- What was implemented
+  - Added direct unit coverage for the sidecar response mapper and OpenAI error-envelope mapping so assistant text concatenation, millisecond timestamp normalization, invalid-response failures, and sanitized error shapes are exercised without needing full route setup.
+  - Extended the integration suite with malformed JSON and upstream-timeout chat-completions cases, including assertions that 400/502 envelopes remain sanitized and do not leak upstream credentials.
+  - Completed US-008 coverage expectations on top of the existing config, model-list, chat-request, upstream-client, and sidecar route suites, then reran the full Bun, typecheck, build, and packaging smoke-test gates.
+- **Learnings for future iterations:**
+  - Patterns discovered
+    Exporting stable mapper helpers is a low-risk way to add precise unit coverage without changing the request pipeline or duplicating route setup in tests.
+  - Gotchas encountered
+    `git add -A` plus parallel status checks can race in the terminal harness, so staging and index inspection should stay sequential before commit.
+  - Useful context
+    The chat route hits `/provider` before any session work, so a provider timeout is the simplest way to verify the sidecar's sanitized timeout envelope end to end.
+---

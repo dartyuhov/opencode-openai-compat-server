@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "total": 9,
+  "remaining": 9,
+  "quality_gates": [
+    "bun test",
+    "bun run typecheck",
+    "bun run build",
+    "bun run test:e2e:real"
+  ],
+  "id": "US-001",
+  "title": "Scaffold the Bun TypeScript OpenCode plugin project"
+}

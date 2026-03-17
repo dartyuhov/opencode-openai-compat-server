@@ -116,3 +116,37 @@ Run summary: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralp
   - Useful context
     Provider discovery varies by directory, and assistant text for the MVP should concatenate only non-ignored `text` parts while dropping non-text parts from the final text output.
 ---
+## [2026-03-17 01:37:38 CET] - US-004: Stand up the sidecar server and health route
+Thread: 
+Run: 20260317-005852-82072 (iteration 4)
+Run log: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralph/runs/run-20260317-005852-82072-iter-4.log
+Run summary: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralph/runs/run-20260317-005852-82072-iter-4.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 2dc6831 feat(sidecar): add health route and auth middleware
+- Post-commit status: `clean`
+- Verification:
+  - Command: bun test -> PASS
+  - Command: bun run typecheck -> PASS
+  - Command: bun run build -> PASS
+  - Command: bun run test:e2e:real -> PASS
+- Files changed:
+  - .agents/tasks/prd-openai-compat.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - src/sidecar.ts
+  - test/scaffold.test.ts
+  - test/sidecar-server.test.ts
+- What was implemented
+  - Replaced the sidecar stub with a Bun request pipeline that provides shared JSON helpers, OpenAI-style error envelopes, unsupported-route handling, and optional bearer-token auth enforced before route handlers execute.
+  - Added `GET /health` with sidecar bind details, plugin identity, auth status, and upstream reachability reporting that reuses the upstream client's cache window instead of forcing a fresh probe on every call.
+  - Added request logging that records only method, route, status, and failure reason, plus tests covering healthy and degraded health checks, unauthorized requests, unsupported routes, and the default `127.0.0.1:4097` health response.
+- **Learnings for future iterations:**
+  - Patterns discovered
+    The sidecar can treat upstream reachability as advisory health by returning `200` with a degraded payload while keeping route-level failures in a shared OpenAI error envelope.
+  - Gotchas encountered
+    Request logging adds entries during startup tests, so assertions that depend on log order should search by message instead of assuming fixed indices.
+  - Useful context
+    Comparing the configured bearer token with `timingSafeEqual` and logging only route metadata keeps auth failures and request traces useful without leaking credentials or request content.
+---

@@ -16,7 +16,13 @@ import {
   type RawPluginConfig,
 } from "./config.js";
 import { mapProviderCatalogToOpenAIModelList } from "./models.js";
-import { OpenCodeUpstreamClient, UpstreamClientError, isUpstreamClientError } from "./upstream.js";
+import {
+  OpenCodeUpstreamClient,
+  UpstreamClientError,
+  isUpstreamClientError,
+  type UpstreamAssistantMessage,
+  type UpstreamAssistantMessagePart,
+} from "./upstream.js";
 
 type PluginClient = PluginInput["client"];
 
@@ -64,6 +70,26 @@ type OpenAIErrorEnvelope = {
     type: string;
     param: string | null;
     code: string | null;
+  };
+};
+
+type OpenAIChatCompletionResponse = {
+  id: string;
+  object: "chat.completion";
+  created: number;
+  model: string;
+  choices: Array<{
+    index: number;
+    message: {
+      role: "assistant";
+      content: string;
+    };
+    finish_reason: string;
+  }>;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
   };
 };
 
@@ -202,6 +228,69 @@ const createOpenAIErrorResponse = (input: {
       status: input.status,
     },
   );
+
+const normalizeCompletionTimestamp = (value: number) =>
+  value >= 1_000_000_000_000 ? Math.floor(value / 1_000) : Math.floor(value);
+
+const buildAssistantMessageEndpoint = (sessionId: string) => `/session/${encodeURIComponent(sessionId)}/message`;
+
+const readAssistantContent = (assistantMessage: UpstreamAssistantMessage) => {
+  const content = assistantMessage.parts
+    .filter((part): part is Extract<UpstreamAssistantMessagePart, { type: "text" }> => part.type === "text")
+    .filter((part) => !part.ignored)
+    .map((part) => part.text)
+    .join("");
+
+  if (content.length === 0) {
+    throw new UpstreamClientError({
+      code: "invalid_response",
+      message: "OpenCode upstream returned an invalid response.",
+      endpoint: buildAssistantMessageEndpoint(assistantMessage.sessionId),
+    });
+  }
+
+  return content;
+};
+
+const mapUsage = (assistantMessage: UpstreamAssistantMessage): OpenAIChatCompletionResponse["usage"] | undefined => {
+  const tokens = assistantMessage.tokens;
+
+  if (!tokens || tokens.input < 0 || tokens.output < 0) {
+    return undefined;
+  }
+
+  return {
+    prompt_tokens: tokens.input,
+    completion_tokens: tokens.output,
+    total_tokens: tokens.input + tokens.output,
+  };
+};
+
+const mapAssistantMessageToChatCompletion = (
+  assistantMessage: UpstreamAssistantMessage,
+  requestedModel: string,
+): OpenAIChatCompletionResponse => {
+  const content = readAssistantContent(assistantMessage);
+  const usage = mapUsage(assistantMessage);
+
+  return {
+    id: assistantMessage.id,
+    object: "chat.completion",
+    created: normalizeCompletionTimestamp(assistantMessage.createdAt),
+    model: requestedModel,
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: "assistant",
+          content,
+        },
+        finish_reason: assistantMessage.finish && assistantMessage.finish.length > 0 ? assistantMessage.finish : "stop",
+      },
+    ],
+    ...(usage ? { usage } : {}),
+  };
+};
 
 const readJsonRequest = async <T>(request: Request): Promise<T> => {
   const rawBody = await request.text();
@@ -459,17 +548,20 @@ const handleChatCompletionsRequest = async (context: SidecarRouteContext) => {
   }
 
   const catalog = await context.runtime.upstreamClient.getProviderCatalog();
-
-  resolveChatCompletionModel(parsedRequest.model, catalog);
-  serializeChatCompletionMessages(parsedRequest.messages);
-
-  throw new SidecarHttpError({
-    status: 501,
-    message: "Chat completions execution is not implemented yet.",
-    type: "server_error",
-    code: "not_implemented",
-    failureReason: "not_implemented",
+  const resolvedModel = resolveChatCompletionModel(parsedRequest.model, catalog);
+  const prompt = serializeChatCompletionMessages(parsedRequest.messages);
+  const session = await context.runtime.upstreamClient.createSession({
+    title: "OpenAI chat completion",
   });
+  const assistantMessage = await context.runtime.upstreamClient.createAssistantMessage({
+    sessionId: session.id,
+    providerId: resolvedModel.providerId,
+    modelId: resolvedModel.modelId,
+    agent: context.runtime.config.defaultAgent,
+    prompt,
+  });
+
+  return jsonResponse(mapAssistantMessageToChatCompletion(assistantMessage, parsedRequest.model));
 };
 
 const handleSidecarRequest = async (

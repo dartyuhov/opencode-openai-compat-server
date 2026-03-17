@@ -57,6 +57,37 @@ const startTestSidecar = async (logs: LogEntry[], input?: { apiKey?: string | nu
 
 const getRequestLogs = (logs: LogEntry[]) => logs.filter((entry) => entry.message === "OpenAI compatibility sidecar request completed.");
 
+const buildConnectedOpenAICatalog = () => ({
+  all: [
+    {
+      id: "openai",
+      name: "OpenAI",
+      api: "chat",
+      env: ["OPENAI_API_KEY"],
+      models: {
+        "gpt-5.1": {
+          id: "gpt-5.1",
+          name: "GPT 5.1",
+          release_date: "2026-01-01",
+          attachment: true,
+          reasoning: true,
+          temperature: true,
+          tool_call: true,
+          limit: {
+            context: 200000,
+            output: 16384,
+          },
+          options: {},
+        },
+      },
+    },
+  ],
+  default: {
+    openai: "gpt-5.1",
+  },
+  connected: ["openai"],
+});
+
 afterEach(async () => {
   await resetSidecarForTests();
 
@@ -731,6 +762,449 @@ describe("sidecar server", () => {
       route: "/v1/chat/completions",
       status: 400,
       failureReason: "invalid_model",
+    });
+  });
+
+  test("executes chat completions and maps assistant text into OpenAI-style JSON", async () => {
+    const observedPaths: string[] = [];
+    let createSessionBody: unknown;
+    let createMessageBody: unknown;
+    const upstream = registerServer(async (request) => {
+      const url = new URL(request.url);
+      observedPaths.push(`${request.method} ${url.pathname}`);
+
+      if (request.method === "GET" && url.pathname === "/provider") {
+        return Response.json(buildConnectedOpenAICatalog());
+      }
+
+      if (request.method === "POST" && url.pathname === "/session") {
+        createSessionBody = await request.json();
+
+        return Response.json({
+          id: "session-123",
+          projectID: "project-1",
+          directory: "/workspace/demo",
+          title: "OpenAI chat completion",
+          version: "1",
+          time: {
+            created: 1700000000,
+            updated: 1700000001,
+          },
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/session/session-123/message") {
+        createMessageBody = await request.json();
+
+        return Response.json({
+          info: {
+            id: "message-1",
+            sessionID: "session-123",
+            role: "assistant",
+            time: {
+              created: 1700000002,
+              completed: 1700000003,
+            },
+            parentID: "message-0",
+            modelID: "gpt-5.1",
+            providerID: "openai",
+            mode: "chat",
+            path: {
+              cwd: "/workspace/demo",
+              root: "/workspace/demo",
+            },
+            cost: 0.42,
+            tokens: {
+              input: 12,
+              output: 7,
+              reasoning: 2,
+              cache: {
+                read: 1,
+                write: 0,
+              },
+            },
+            finish: "stop",
+          },
+          parts: [
+            {
+              id: "part-1",
+              sessionID: "session-123",
+              messageID: "message-1",
+              type: "reasoning",
+              text: "hidden reasoning",
+            },
+            {
+              id: "part-2",
+              sessionID: "session-123",
+              messageID: "message-1",
+              type: "text",
+              text: "Hello",
+            },
+            {
+              id: "part-3",
+              sessionID: "session-123",
+              messageID: "message-1",
+              type: "text",
+              text: " world",
+            },
+          ],
+        });
+      }
+
+      return new Response("Not found", { status: 404 });
+    });
+    const logs: LogEntry[] = [];
+    const runtime = await startTestSidecar(logs, {
+      upstreamUrl: `http://127.0.0.1:${upstream.port}`,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${runtime.server.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-5.1",
+        messages: [
+          {
+            role: "system",
+            content: "You are concise.",
+          },
+          {
+            role: "user",
+            content: "Say hello in one sentence.",
+          },
+        ],
+      }),
+    });
+    const body = (await response.json()) as Record<string, any>;
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      id: "message-1",
+      object: "chat.completion",
+      created: 1700000002,
+      model: "openai/gpt-5.1",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: "Hello world",
+          },
+          finish_reason: "stop",
+        },
+      ],
+      usage: {
+        prompt_tokens: 12,
+        completion_tokens: 7,
+        total_tokens: 19,
+      },
+    });
+    expect(observedPaths).toEqual(["GET /provider", "POST /session", "POST /session/session-123/message"]);
+    expect(createSessionBody).toEqual({
+      title: "OpenAI chat completion",
+    });
+    expect(createMessageBody).toEqual({
+      model: {
+        providerID: "openai",
+        modelID: "gpt-5.1",
+      },
+      agent: "build",
+      parts: [
+        {
+          type: "text",
+          text: "System:\nYou are concise.\n\nUser:\nSay hello in one sentence.",
+        },
+      ],
+    });
+
+    const [requestLog] = getRequestLogs(logs);
+    expect(requestLog?.extra).toEqual({
+      method: "POST",
+      route: "/v1/chat/completions",
+      status: 200,
+      failureReason: null,
+    });
+  });
+
+  test("omits usage when the upstream assistant response lacks token metadata", async () => {
+    const upstream = registerServer(async (request) => {
+      const url = new URL(request.url);
+
+      if (request.method === "GET" && url.pathname === "/provider") {
+        return Response.json(buildConnectedOpenAICatalog());
+      }
+
+      if (request.method === "POST" && url.pathname === "/session") {
+        return Response.json({
+          id: "session-234",
+          projectID: "project-1",
+          directory: "/workspace/demo",
+          title: "OpenAI chat completion",
+          version: "1",
+          time: {
+            created: 1700000100,
+            updated: 1700000101,
+          },
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/session/session-234/message") {
+        return Response.json({
+          info: {
+            id: "message-2",
+            sessionID: "session-234",
+            role: "assistant",
+            time: {
+              created: 1700000102,
+            },
+            parentID: "message-1",
+            modelID: "gpt-5.1",
+            providerID: "openai",
+            mode: "chat",
+            path: {
+              cwd: "/workspace/demo",
+              root: "/workspace/demo",
+            },
+            finish: null,
+          },
+          parts: [
+            {
+              id: "part-1",
+              sessionID: "session-234",
+              messageID: "message-2",
+              type: "text",
+              text: "Hello without usage",
+            },
+          ],
+        });
+      }
+
+      return new Response("Not found", { status: 404 });
+    });
+    const logs: LogEntry[] = [];
+    const runtime = await startTestSidecar(logs, {
+      upstreamUrl: `http://127.0.0.1:${upstream.port}`,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${runtime.server.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-5.1",
+        messages: [
+          {
+            role: "user",
+            content: "Say hello.",
+          },
+        ],
+      }),
+    });
+    const body = (await response.json()) as Record<string, any>;
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      id: "message-2",
+      object: "chat.completion",
+      created: 1700000102,
+      model: "openai/gpt-5.1",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: "Hello without usage",
+          },
+          finish_reason: "stop",
+        },
+      ],
+    });
+    expect(body).not.toHaveProperty("usage");
+
+    const [requestLog] = getRequestLogs(logs);
+    expect(requestLog?.extra).toEqual({
+      method: "POST",
+      route: "/v1/chat/completions",
+      status: 200,
+      failureReason: null,
+    });
+  });
+
+  test("returns a sanitized 502 when the upstream execution fails", async () => {
+    const upstream = registerServer(async (request) => {
+      const url = new URL(request.url);
+
+      if (request.method === "GET" && url.pathname === "/provider") {
+        return Response.json(buildConnectedOpenAICatalog());
+      }
+
+      if (request.method === "POST" && url.pathname === "/session") {
+        return Response.json({
+          id: "session-345",
+          projectID: "project-1",
+          directory: "/workspace/demo",
+          title: "OpenAI chat completion",
+          version: "1",
+          time: {
+            created: 1700000200,
+            updated: 1700000201,
+          },
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/session/session-345/message") {
+        return new Response("upstream exploded", { status: 500 });
+      }
+
+      return new Response("Not found", { status: 404 });
+    });
+    const logs: LogEntry[] = [];
+    const runtime = await startTestSidecar(logs, {
+      upstreamUrl: `http://127.0.0.1:${upstream.port}`,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${runtime.server.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-5.1",
+        messages: [
+          {
+            role: "user",
+            content: "Say hello.",
+          },
+        ],
+      }),
+    });
+    const body = (await response.json()) as Record<string, any>;
+
+    expect(response.status).toBe(502);
+    expect(body).toEqual({
+      error: {
+        message: "OpenCode upstream request failed.",
+        type: "api_error",
+        param: null,
+        code: "upstream",
+      },
+    });
+
+    const [requestLog] = getRequestLogs(logs);
+    expect(requestLog?.extra).toEqual({
+      method: "POST",
+      route: "/v1/chat/completions",
+      status: 502,
+      failureReason: "upstream",
+    });
+  });
+
+  test("returns a sanitized 502 when the upstream response has no assistant text parts", async () => {
+    const upstream = registerServer(async (request) => {
+      const url = new URL(request.url);
+
+      if (request.method === "GET" && url.pathname === "/provider") {
+        return Response.json(buildConnectedOpenAICatalog());
+      }
+
+      if (request.method === "POST" && url.pathname === "/session") {
+        return Response.json({
+          id: "session-456",
+          projectID: "project-1",
+          directory: "/workspace/demo",
+          title: "OpenAI chat completion",
+          version: "1",
+          time: {
+            created: 1700000300,
+            updated: 1700000301,
+          },
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/session/session-456/message") {
+        return Response.json({
+          info: {
+            id: "message-3",
+            sessionID: "session-456",
+            role: "assistant",
+            time: {
+              created: 1700000302,
+              completed: 1700000303,
+            },
+            parentID: "message-2",
+            modelID: "gpt-5.1",
+            providerID: "openai",
+            mode: "chat",
+            path: {
+              cwd: "/workspace/demo",
+              root: "/workspace/demo",
+            },
+            tokens: {
+              input: 8,
+              output: 0,
+              reasoning: 1,
+              cache: {
+                read: 0,
+                write: 0,
+              },
+            },
+            finish: "stop",
+          },
+          parts: [
+            {
+              id: "part-1",
+              sessionID: "session-456",
+              messageID: "message-3",
+              type: "reasoning",
+              text: "hidden",
+            },
+          ],
+        });
+      }
+
+      return new Response("Not found", { status: 404 });
+    });
+    const logs: LogEntry[] = [];
+    const runtime = await startTestSidecar(logs, {
+      upstreamUrl: `http://127.0.0.1:${upstream.port}`,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${runtime.server.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-5.1",
+        messages: [
+          {
+            role: "user",
+            content: "Say hello.",
+          },
+        ],
+      }),
+    });
+    const body = (await response.json()) as Record<string, any>;
+
+    expect(response.status).toBe(502);
+    expect(body).toEqual({
+      error: {
+        message: "OpenCode upstream returned an invalid response.",
+        type: "api_error",
+        param: null,
+        code: "invalid_response",
+      },
+    });
+
+    const [requestLog] = getRequestLogs(logs);
+    expect(requestLog?.extra).toEqual({
+      method: "POST",
+      route: "/v1/chat/completions",
+      status: 502,
+      failureReason: "invalid_response",
     });
   });
 

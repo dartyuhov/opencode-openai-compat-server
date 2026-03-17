@@ -142,7 +142,7 @@ export type UpstreamAssistantMessage = {
   finish: string | null;
   createdAt: number;
   completedAt: number | null;
-  cost: number;
+  cost: number | null;
   tokens: {
     input: number;
     output: number;
@@ -151,7 +151,7 @@ export type UpstreamAssistantMessage = {
       read: number;
       write: number;
     };
-  };
+  } | null;
   text: string;
   parts: UpstreamAssistantMessagePart[];
 };
@@ -788,6 +788,36 @@ const parseAssistantPayloadError = (value: unknown, endpoint: string): UpstreamC
   });
 };
 
+const readOptionalFiniteNumber = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const parseOptionalAssistantTokens = (value: unknown): UpstreamAssistantMessage["tokens"] => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const cache = isRecord(value.cache) ? value.cache : null;
+  const input = readOptionalFiniteNumber(value.input);
+  const output = readOptionalFiniteNumber(value.output);
+  const reasoning = readOptionalFiniteNumber(value.reasoning);
+  const cacheRead = readOptionalFiniteNumber(cache?.read);
+  const cacheWrite = readOptionalFiniteNumber(cache?.write);
+
+  if (input == null || output == null || reasoning == null || cacheRead == null || cacheWrite == null) {
+    return null;
+  }
+
+  return {
+    input,
+    output,
+    reasoning,
+    cache: {
+      read: cacheRead,
+      write: cacheWrite,
+    },
+  };
+};
+
 const parseAssistantMessage = (value: unknown, endpoint: string): UpstreamAssistantMessage => {
   const record = expectRecord(value, "assistant message response");
   const info = expectRecord(record.info, "assistant message response.info");
@@ -803,8 +833,6 @@ const parseAssistantMessage = (value: unknown, endpoint: string): UpstreamAssist
 
   const time = expectRecord(info.time, "assistant message response.info.time");
   const path = expectRecord(info.path, "assistant message response.info.path");
-  const tokens = expectRecord(info.tokens, "assistant message response.info.tokens");
-  const cache = expectRecord(tokens.cache, "assistant message response.info.tokens.cache");
   const parts = expectArray(record.parts, "assistant message response.parts").map((entry, index) =>
     parseAssistantPart(entry, `assistant message response.parts[${index}]`),
   );
@@ -824,16 +852,8 @@ const parseAssistantMessage = (value: unknown, endpoint: string): UpstreamAssist
     finish: info.finish == null ? null : expectString(info.finish, "assistant message response.info.finish"),
     createdAt: expectNumber(time.created, "assistant message response.info.time.created"),
     completedAt: time.completed == null ? null : expectNumber(time.completed, "assistant message response.info.time.completed"),
-    cost: expectNumber(info.cost, "assistant message response.info.cost"),
-    tokens: {
-      input: expectNumber(tokens.input, "assistant message response.info.tokens.input"),
-      output: expectNumber(tokens.output, "assistant message response.info.tokens.output"),
-      reasoning: expectNumber(tokens.reasoning, "assistant message response.info.tokens.reasoning"),
-      cache: {
-        read: expectNumber(cache.read, "assistant message response.info.tokens.cache.read"),
-        write: expectNumber(cache.write, "assistant message response.info.tokens.cache.write"),
-      },
-    },
+    cost: readOptionalFiniteNumber(info.cost),
+    tokens: parseOptionalAssistantTokens(info.tokens),
     text: parts
       .filter((part): part is Extract<UpstreamAssistantMessagePart, { type: "text" }> => part.type === "text")
       .filter((part) => !part.ignored)

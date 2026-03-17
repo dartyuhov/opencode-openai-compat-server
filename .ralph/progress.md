@@ -292,3 +292,39 @@ Run summary: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralp
   - Useful context
     The chat route hits `/provider` before any session work, so a provider timeout is the simplest way to verify the sidecar's sanitized timeout envelope end to end.
 ---
+## [2026-03-17 02:21:05 CET] - US-009: Verify the plugin against a real OpenCode instance
+Thread: 
+Run: 20260317-005852-82072 (iteration 9)
+Run log: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralph/runs/run-20260317-005852-82072-iter-9.log
+Run summary: /Users/dartsiukhou/dev/personal/opencode-openai-api-converter/.ralph/runs/run-20260317-005852-82072-iter-9.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: d032322 test(e2e): verify real opencode flow
+- Post-commit status: `clean`
+- Verification:
+  - Command: bun test -> PASS
+  - Command: bun run typecheck -> PASS
+  - Command: bun run build -> PASS
+  - Command: bun run test:e2e:real -> PASS
+- Files changed:
+  - .agents/tasks/prd-openai-compat.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - AGENTS.md
+  - README.md
+  - scripts/test-e2e-real.ts
+  - src/upstream.ts
+  - test/upstream-client.test.ts
+- What was implemented
+  - Replaced the packaging-only `bun run test:e2e:real` script with a real verifier that loads the built plugin export from `dist/`, auto-starts or attaches to a live `opencode serve` instance, waits for sidecar `/health`, checks `/v1/models`, sends a real non-streaming chat completion, and verifies an unreachable-upstream negative path with no fake models advertised.
+  - Updated upstream provider normalization so the sidecar accepts the current OpenCode provider schema, including capability-based model metadata, nested cache costs, `active` model status, and disconnected providers whose model payloads should not block live health or model checks.
+  - Added README and AGENTS operational guidance covering prerequisites, OpenCode setup, environment overrides, example `curl` commands, expected output shapes, and the negative-case behavior required to prove the MVP against real upstream behavior.
+- **Learnings for future iterations:**
+  - Patterns discovered
+    Real OpenCode verification is more reliable when the helper uses the packaged plugin export plus a live `opencode serve` process, because it exercises both packaging metadata and the actual upstream JSON contract in one command.
+  - Gotchas encountered
+    The live `/provider` response contains many disconnected providers whose model schemas can drift independently; disconnected model parsing should not be allowed to break readiness or connected-model discovery.
+  - Useful context
+    Auto-started OpenCode servers can be shut down cleanly through `POST /global/dispose`, which keeps the real-e2e helper from leaving orphaned background processes behind.
+---

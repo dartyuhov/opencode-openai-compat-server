@@ -65,3 +65,4 @@
 [2026-03-17 02:05:48 CET] Start US-009 audit and context loading
 [2026-03-17 02:14:19 CET] Implemented US-009 real verification flow: updated upstream parser for current OpenCode payloads, replaced packaging-only e2e script with live sidecar verification, and added README/AGENTS guidance
 [2026-03-17 02:20:10 CET] Verification complete for US-009: bun test, bun run typecheck, bun run build, and bun run test:e2e:real passed against a real OpenCode instance
+[2026-03-17 02:21:23 CET] Updated Ralph progress entry for US-009

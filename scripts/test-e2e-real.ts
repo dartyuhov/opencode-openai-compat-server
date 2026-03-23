@@ -29,6 +29,8 @@ type BuiltPluginModule = {
   resetSidecarForTests?: () => Promise<void>;
 };
 
+type BuiltPluginHooks = Awaited<ReturnType<Plugin>>;
+
 type AutoStartedUpstream = {
   upstreamUrl: URL;
   child: ChildProcess;
@@ -94,6 +96,25 @@ const applySidecarEnv = () => {
   process.env.OPENCODE_OPENAI_COMPAT_PORT = process.env.OPENCODE_REAL_SIDECAR_PORT ?? "0";
   process.env.OPENCODE_OPENAI_COMPAT_REQUEST_TIMEOUT_MS = String(defaultTimeoutMs);
   process.env.OPENCODE_OPENAI_COMPAT_MODELS_CACHE_TTL_MS = "1000";
+};
+
+const triggerServeModePluginStartup = async (plugin: BuiltPluginHooks) => {
+  const eventHook = plugin?.event;
+  ensure(typeof eventHook === "function", "Built package did not return a valid OpenCode plugin event hook.");
+
+  const originalArgv = process.argv;
+
+  try {
+    process.argv = [originalArgv[0] ?? "node", originalArgv[1] ?? "opencode", "serve"];
+    await eventHook({
+      event: {
+        type: "server.connected",
+        properties: {},
+      },
+    } as Parameters<typeof eventHook>[0]);
+  } finally {
+    process.argv = originalArgv;
+  }
 };
 
 const fetchJson = async (url: string, init?: RequestInit) => {
@@ -339,8 +360,7 @@ const startBuiltPluginSidecar = async (builtPlugin: BuiltPluginModule, upstreamU
     }) as unknown as Parameters<typeof pluginFactory>[0]["$"],
   } as unknown as Parameters<typeof pluginFactory>[0]);
 
-  ensure(plugin && typeof plugin.config === "function", "Built package did not return a valid OpenCode plugin config hook.");
-  await plugin.config({});
+  await triggerServeModePluginStartup(plugin);
 
   const getRuntime = builtPlugin.getSidecarRuntimeForTests;
   ensure(typeof getRuntime === "function", "Built package is missing the sidecar runtime helper.");

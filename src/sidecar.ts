@@ -170,6 +170,11 @@ const buildLogDetails = (config: StartupLogDetails) => ({
   upstreamTarget: config.upstreamTarget,
 });
 
+const isPortInUseStartupError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Failed to start server\. Is port \d+ in use\?/i.test(message);
+};
+
 const buildResponseHeaders = (headersInit?: ResponseInit["headers"]) => {
   const headers = new Headers(JSON_RESPONSE_HEADERS);
 
@@ -731,6 +736,15 @@ export const startSidecarOnce = async ({ client, rawConfig, upstreamUrl }: Start
         upstreamUrl,
       });
       const message = error instanceof Error ? error.message : String(error);
+
+      if (isPortInUseStartupError(error)) {
+        await logSidecarEvent(client, "warn", "Sidecar port is already in use; skipping startup and letting OpenCode continue.", {
+          ...buildLogDetails(attemptedStartup),
+          error: message,
+        });
+
+        return null;
+      }
 
       await logSidecarEvent(client, "error", "OpenAI compatibility sidecar startup failed.", {
         ...buildLogDetails(attemptedStartup),

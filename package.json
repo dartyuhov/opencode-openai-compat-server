@@ -25,6 +25,7 @@
   ],
   "scripts": {
     "build": "bun run scripts/check-plugin-packaging.ts && rm -rf dist && tsc -p tsconfig.build.json",
+    "serve:compat": "bun run scripts/serve-with-sidecar.ts",
     "test": "bun test",
     "typecheck": "bun run scripts/check-plugin-packaging.ts && tsc --noEmit -p tsconfig.json",
     "test:e2e:real": "bun run scripts/test-e2e-real.ts"

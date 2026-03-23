@@ -61,9 +61,20 @@ export {
   type UpstreamSession,
 } from "./upstream.js";
 
+export const shouldAutoStartSidecarForCurrentProcess = (argv: readonly string[] = process.argv) =>
+  argv.slice(2).includes("serve");
+
 export const OpenCodeOpenAICompatPlugin: Plugin = async (input) => {
   return {
-    config: async (_config) => {
+    event: async ({ event }) => {
+      if (event.type !== "server.connected") {
+        return;
+      }
+
+      if (!shouldAutoStartSidecarForCurrentProcess()) {
+        return;
+      }
+
       await startSidecarOnce({
         client: input.client,
         upstreamUrl: input.serverUrl,

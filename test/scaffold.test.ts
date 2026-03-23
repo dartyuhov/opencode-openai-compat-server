@@ -10,6 +10,7 @@ import {
   getSidecarRuntimeForTests,
   parsePluginConfig,
   resetSidecarForTests,
+  shouldAutoStartSidecarForCurrentProcess,
   startSidecarOnce,
 } from "../src/index.js";
 
@@ -99,6 +100,11 @@ describe("plugin startup", () => {
     expect(() => parsePluginConfig({ host: "0.0.0.0" })).toThrow(PluginConfigError);
   });
 
+  test("detects serve mode from process arguments", () => {
+    expect(shouldAutoStartSidecarForCurrentProcess(["node", "opencode", "serve"])) .toBe(true);
+    expect(shouldAutoStartSidecarForCurrentProcess(["node", "opencode", "."])) .toBe(false);
+  });
+
   test("logs clear startup failures and does not leave runtime state behind", async () => {
     const logs: LogEntry[] = [];
 
@@ -140,7 +146,46 @@ describe("plugin startup", () => {
     expect(runtime?.server.port).toBeGreaterThan(0);
   });
 
-  test("starts the sidecar once per process and reuses the existing listener", async () => {
+  test("skips sidecar startup when the configured port is already in use", async () => {
+    const logs: LogEntry[] = [];
+    const occupiedServer = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch() {
+        return new Response("occupied");
+      },
+    });
+
+    try {
+      const runtime = await startSidecarOnce({
+        client: createFakeClient(logs),
+        rawConfig: {
+          host: "127.0.0.1",
+          port: occupiedServer.port,
+        },
+        upstreamUrl: new URL("http://127.0.0.1:4096"),
+      });
+
+      expect(runtime).toBeNull();
+      expect(getSidecarRuntimeForTests()).toBeNull();
+      expect(logs).toContainEqual({
+        service: PLUGIN_PACKAGE_NAME,
+        level: "warn",
+        message: "Sidecar port is already in use; skipping startup and letting OpenCode continue.",
+        extra: {
+          pluginName: PLUGIN_PACKAGE_NAME,
+          bindHost: "127.0.0.1",
+          bindPort: occupiedServer.port,
+          upstreamTarget: "http://127.0.0.1:4096",
+          error: `Failed to start server. Is port ${occupiedServer.port} in use?`,
+        },
+      });
+    } finally {
+      await occupiedServer.stop(true);
+    }
+  });
+
+  test("starts the sidecar once per process during serve mode and reuses the existing listener", async () => {
     const logs: LogEntry[] = [];
     const hooks = await OpenCodeOpenAICompatPlugin({
       client: createFakeClient(logs),
@@ -151,8 +196,9 @@ describe("plugin startup", () => {
       $: {} as never,
     });
 
-    expect(typeof hooks.config).toBe("function");
+    expect(typeof hooks.event).toBe("function");
 
+    const originalArgv = process.argv;
     await withEnv(
       {
         [`${PLUGIN_ENV_PREFIX}_HOST`]: "127.0.0.1",
@@ -160,19 +206,28 @@ describe("plugin startup", () => {
         [`${PLUGIN_ENV_PREFIX}_UPSTREAM_BASE_URL`]: "http://user:secret@localhost:4096/session?token=secret",
       },
       async () => {
-        await hooks.config?.({} as never);
-        const firstRuntime = getSidecarRuntimeForTests();
+        try {
+          process.argv = ["node", "opencode", "."];
+          await hooks.event?.({ event: { type: "server.connected", properties: {} } as never });
+          expect(getSidecarRuntimeForTests()).toBeNull();
 
-        expect(firstRuntime).not.toBeNull();
-        expect(firstRuntime?.server.port).toBeGreaterThan(0);
+          process.argv = ["node", "opencode", "serve"];
+          await hooks.event?.({ event: { type: "server.connected", properties: {} } as never });
+          const firstRuntime = getSidecarRuntimeForTests();
 
-        const firstResponse = await fetch(`http://127.0.0.1:${firstRuntime?.server.port}/`);
-        expect(firstResponse.status).toBe(404);
+          expect(firstRuntime).not.toBeNull();
+          expect(firstRuntime?.server.port).toBeGreaterThan(0);
 
-        await hooks.config?.({} as never);
-        const secondRuntime = getSidecarRuntimeForTests();
+          const firstResponse = await fetch(`http://127.0.0.1:${firstRuntime?.server.port}/`);
+          expect(firstResponse.status).toBe(404);
 
-        expect(secondRuntime).toBe(firstRuntime);
+          await hooks.event?.({ event: { type: "server.connected", properties: {} } as never });
+          const secondRuntime = getSidecarRuntimeForTests();
+
+          expect(secondRuntime).toBe(firstRuntime);
+        } finally {
+          process.argv = originalArgv;
+        }
       },
     );
 

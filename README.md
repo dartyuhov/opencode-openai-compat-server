@@ -83,27 +83,27 @@ opencode --help
 3. Start the wrapper:
 
 ```bash
-OPENCODE_OPENAI_COMPAT_API_KEY=handy bun run serve:compat
+OPENCODE_OPENAI_COMPAT_API_KEY="<YOUR TOKEN>" bun run serve:compat
 ```
 
 4. Verify the upstream OpenCode server and the sidecar:
 
 ```bash
 curl -s http://127.0.0.1:4096/global/health | jq
-curl -s -H 'authorization: Bearer handy' http://127.0.0.1:4097/health | jq
-curl -s -H 'authorization: Bearer handy' http://127.0.0.1:4097/v1/models | jq '.data[0:5]'
+curl -s -H 'authorization: Bearer <YOUR TOKEN>' http://127.0.0.1:4097/health | jq
+curl -s -H 'authorization: Bearer <YOUR TOKEN>' http://127.0.0.1:4097/v1/models | jq '.data[0:5]'
 ```
 
 5. Point your OpenAI-compatible client at:
 
 - Base URL: `http://127.0.0.1:4097/v1`
-- API key: `handy`
+- API key: `<YOUR TOKEN>`
 - Model: any exact ID returned by `GET /v1/models`
 
 Example client settings for Handy:
 
 - Base URL: `http://127.0.0.1:4097/v1`
-- API key: `handy`
+- API key: `<YOUR TOKEN>`
 - Model: for example `opencode/big-pickle` if that exact ID appears in `GET /v1/models`
 
 6. If you want different ports, set them before startup:
@@ -111,7 +111,7 @@ Example client settings for Handy:
 ```bash
 OPENCODE_SERVER_PORT=43119 \
 OPENCODE_OPENAI_COMPAT_PORT=4147 \
-OPENCODE_OPENAI_COMPAT_API_KEY=handy \
+OPENCODE_OPENAI_COMPAT_API_KEY="<YOUR TOKEN>" \
 bun run serve:compat
 ```
 
@@ -128,7 +128,7 @@ bun run build
 2. Install the agent:
 
 ```bash
-OPENCODE_OPENAI_COMPAT_API_KEY=handy ./scripts/install-launchd-agent.sh
+OPENCODE_OPENAI_COMPAT_API_KEY="<YOUR TOKEN>" ./scripts/install-launchd-agent.sh
 ```
 
 3. Confirm it is loaded:
@@ -140,7 +140,7 @@ launchctl list | rg 'opencode-serve-openai-compat'
 4. Verify the sidecar:
 
 ```bash
-curl -s -H 'authorization: Bearer handy' http://127.0.0.1:4097/health | jq
+curl -s -H 'authorization: Bearer <YOUR TOKEN>' http://127.0.0.1:4097/health | jq
 ```
 
 Useful overrides when installing:
@@ -149,7 +149,7 @@ Useful overrides when installing:
 REPO_DIR="$(pwd)" \
 OPENCODE_SERVER_PORT=43119 \
 OPENCODE_OPENAI_COMPAT_PORT=4147 \
-OPENCODE_OPENAI_COMPAT_API_KEY=handy \
+OPENCODE_OPENAI_COMPAT_API_KEY="<YOUR TOKEN>" \
 LAUNCHD_LABEL=com.user.opencode-serve-openai-compat \
 ./scripts/install-launchd-agent.sh
 ```

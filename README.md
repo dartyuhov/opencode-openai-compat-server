@@ -1,6 +1,8 @@
 # opencode-openai-compat
 
-`opencode-openai-compat` exposes a small OpenAI-compatible sidecar in front of a real OpenCode server.
+`opencode-openai-compat` turns a local OpenCode server into an OpenAI API-compatible server by running a small compatibility sidecar in front of it.
+
+This repo packages that sidecar for wrapper mode, `launchd`, and plugin-based startup.
 
 Request flow:
 

@@ -22,6 +22,7 @@ SERVER_PORT="${OPENCODE_SERVER_PORT:-4096}"
 SERVER_HOSTNAME="${OPENCODE_SERVER_HOSTNAME:-127.0.0.1}"
 SIDECAR_PORT="${OPENCODE_OPENAI_COMPAT_PORT:-4097}"
 API_KEY="${OPENCODE_OPENAI_COMPAT_API_KEY:-}"
+LAUNCHD_PATH="${LAUNCHD_PATH:-${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}}"
 LOG_DIR="${HOME}/Library/Logs/opencode-openai-compat"
 PLIST_PATH="${HOME}/Library/LaunchAgents/${LABEL}.plist"
 REPO_DIR="${REPO_DIR:-${DEFAULT_REPO_DIR}}"
@@ -48,6 +49,8 @@ cat > "${PLIST_PATH}" <<EOF
 
   <key>EnvironmentVariables</key>
   <dict>
+    <key>PATH</key>
+    <string>${LAUNCHD_PATH}</string>
     <key>OPENCODE_BIN</key>
     <string>${OPENCODE_BIN}</string>
     <key>OPENCODE_SERVER_HOSTNAME</key>

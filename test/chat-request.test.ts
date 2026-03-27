@@ -173,8 +173,36 @@ describe("chat completion request helpers", () => {
     });
   });
 
-  test("rejects unsupported top-level fields with a field-specific error", () => {
-    const error = getValidationError(() =>
+  test("prepares a validated request when a bare model id uniquely matches one connected provider", () => {
+    expect(
+      prepareChatCompletionRequest(
+        {
+          model: "gpt-5.1",
+          messages: [
+            {
+              role: "user",
+              content: "Hello",
+            },
+          ],
+        },
+        catalog,
+      ),
+    ).toEqual({
+      model: "gpt-5.1",
+      providerId: "openai",
+      modelId: "gpt-5.1",
+      messages: [
+        {
+          role: "user",
+          content: "Hello",
+        },
+      ],
+      prompt: "User:\nHello",
+    });
+  });
+
+  test("accepts optional temperature for client compatibility", () => {
+    expect(
       parseChatCompletionRequest({
         model: "openai/gpt-5.1",
         messages: [
@@ -185,17 +213,87 @@ describe("chat completion request helpers", () => {
         ],
         temperature: 0.2,
       }),
+    ).toEqual({
+      model: "openai/gpt-5.1",
+      messages: [
+        {
+          role: "user",
+          content: "Hello",
+        },
+      ],
+      temperature: 0.2,
+    });
+  });
+
+  test("accepts stream=true for streaming clients", () => {
+    expect(
+      parseChatCompletionRequest({
+        model: "openai/gpt-5.1",
+        stream: true,
+        messages: [
+          {
+            role: "user",
+            content: "Hello",
+          },
+        ],
+      }),
+    ).toEqual({
+      model: "openai/gpt-5.1",
+      stream: true,
+      messages: [
+        {
+          role: "user",
+          content: "Hello",
+        },
+      ],
+    });
+  });
+
+  test("rejects unsupported top-level fields with a field-specific error", () => {
+    const error = getValidationError(() =>
+      parseChatCompletionRequest({
+        model: "openai/gpt-5.1",
+        messages: [
+          {
+            role: "user",
+            content: "Hello",
+          },
+        ],
+        top_p: 0.9,
+      }),
     );
 
     expect(error).toMatchObject({
-      message: "Unsupported field 'temperature' in chat completion request.",
-      param: "temperature",
+      message: "Unsupported field 'top_p' in chat completion request.",
+      param: "top_p",
       code: "unsupported_field",
       failureReason: "unsupported_field",
     });
   });
 
-  test("rejects stream=true and empty message arrays", () => {
+  test("rejects non-numeric temperature values", () => {
+    const error = getValidationError(() =>
+      parseChatCompletionRequest({
+        model: "openai/gpt-5.1",
+        messages: [
+          {
+            role: "user",
+            content: "Hello",
+          },
+        ],
+        temperature: "0.2",
+      }),
+    );
+
+    expect(error).toMatchObject({
+      message: "Invalid value for 'temperature': expected a finite number.",
+      param: "temperature",
+      code: "invalid_temperature",
+      failureReason: "invalid_temperature",
+    });
+  });
+
+  test("rejects invalid stream values and empty message arrays", () => {
     const streamError = getValidationError(() =>
       parseChatCompletionRequest({
         model: "openai/gpt-5.1",
@@ -205,7 +303,7 @@ describe("chat completion request helpers", () => {
             content: "Hello",
           },
         ],
-        stream: true,
+        stream: "yes",
       }),
     );
     const messagesError = getValidationError(() =>
@@ -216,10 +314,10 @@ describe("chat completion request helpers", () => {
     );
 
     expect(streamError).toMatchObject({
-      message: "Invalid value for 'stream': only false or omitted is supported.",
+      message: "Invalid value for 'stream': expected a boolean.",
       param: "stream",
-      code: "unsupported_stream",
-      failureReason: "unsupported_stream",
+      code: "invalid_stream",
+      failureReason: "invalid_stream",
     });
     expect(messagesError).toMatchObject({
       message: "Invalid value for 'messages': expected a non-empty array.",
@@ -229,7 +327,18 @@ describe("chat completion request helpers", () => {
     });
   });
 
-  test("rejects multimodal content arrays and unknown models", () => {
+  test("rejects multimodal content arrays, unknown models, and ambiguous bare models", () => {
+    const ambiguousCatalog: UpstreamProviderCatalog = {
+      ...catalog,
+      providers: [
+        catalog.providers[0]!,
+        {
+          ...catalog.providers[0]!,
+          id: "openrouter",
+          name: "OpenRouter",
+        },
+      ],
+    };
     const multimodalError = getValidationError(() =>
       parseChatCompletionRequest({
         model: "openai/gpt-5.1",
@@ -260,6 +369,20 @@ describe("chat completion request helpers", () => {
         catalog,
       ),
     );
+    const ambiguousModelError = getValidationError(() =>
+      prepareChatCompletionRequest(
+        {
+          model: "gpt-5.1",
+          messages: [
+            {
+              role: "user",
+              content: "Hello",
+            },
+          ],
+        },
+        ambiguousCatalog,
+      ),
+    );
 
     expect(multimodalError).toMatchObject({
       message: "Invalid value for 'messages[0].content': content arrays are not supported.",
@@ -270,6 +393,13 @@ describe("chat completion request helpers", () => {
     expect(unknownModelError).toMatchObject({
       message:
         "Invalid value for 'model': model 'anthropic/claude-sonnet-4' is not available from the current connected catalog.",
+      param: "model",
+      code: "invalid_model",
+      failureReason: "invalid_model",
+    });
+    expect(ambiguousModelError).toMatchObject({
+      message:
+        "Invalid value for 'model': bare model 'gpt-5.1' is ambiguous across the current connected catalog; use the format 'provider/model'.",
       param: "model",
       code: "invalid_model",
       failureReason: "invalid_model",

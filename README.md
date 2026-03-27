@@ -21,8 +21,9 @@ The sidecar implements only:
 
 It is intentionally narrow:
 
-- only non-streaming chat completions are supported
-- the request body accepts only `model`, `messages`, and optional `stream: false`
+- chat completions are supported in regular JSON mode and streaming SSE mode with `stream: true`
+- the request body accepts `model`, `messages`, optional `stream`, and optional `temperature` (accepted for client compatibility and currently ignored)
+- `model` can be `provider/model` or a bare model id when it uniquely matches one connected provider
 - each chat completion creates a fresh upstream OpenCode session
 
 ## Modes
@@ -149,12 +150,15 @@ Useful overrides when installing:
 
 ```bash
 REPO_DIR="$(pwd)" \
+LAUNCHD_PATH="$PATH" \
 OPENCODE_SERVER_PORT=43119 \
 OPENCODE_OPENAI_COMPAT_PORT=4147 \
 OPENCODE_OPENAI_COMPAT_API_KEY="<YOUR TOKEN>" \
 LAUNCHD_LABEL=com.user.opencode-serve-openai-compat \
 ./scripts/install-launchd-agent.sh
 ```
+
+`launchd` starts with a minimal default `PATH`, so the installer now records the current shell `PATH` by default. That keeps local MCP tools that depend on `npx`, `docker`, or Homebrew-installed binaries available after login.
 
 Logs are written to:
 
@@ -237,7 +241,7 @@ When `OPENCODE_REAL_UPSTREAM_URL` is not set, the helper:
 3. triggers plugin startup in serve mode
 4. waits for `GET /health` to report a reachable upstream
 5. calls `GET /v1/models` and selects a connected model
-6. sends a real non-streaming `POST /v1/chat/completions`
+6. sends real non-streaming and streaming `POST /v1/chat/completions` requests
 7. restarts the sidecar against an unreachable upstream and verifies the readable failure path
 
 Useful overrides:

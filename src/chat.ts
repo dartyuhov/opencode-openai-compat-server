@@ -1,6 +1,6 @@
 import type { UpstreamProviderCatalog } from "./upstream.js";
 
-const ALLOWED_CHAT_COMPLETION_REQUEST_KEYS = new Set(["model", "messages", "stream"]);
+const ALLOWED_CHAT_COMPLETION_REQUEST_KEYS = new Set(["model", "messages", "stream", "temperature"]);
 const ALLOWED_CHAT_MESSAGE_KEYS = new Set(["role", "content"]);
 const SUPPORTED_CHAT_MESSAGE_ROLES = ["system", "user", "assistant"] as const;
 
@@ -16,7 +16,8 @@ export type OpenAIChatMessage = {
 export type OpenAIChatCompletionRequest = {
   model: string;
   messages: OpenAIChatMessage[];
-  stream?: false;
+  stream?: boolean;
+  temperature?: number;
 };
 
 export type ResolvedChatCompletionModel = {
@@ -72,6 +73,23 @@ const readRequiredString = (value: unknown, param: string) => {
   }
 
   return value.trim();
+};
+
+const readOptionalTemperature = (value: unknown) => {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw createValidationError({
+      message: "Invalid value for 'temperature': expected a finite number.",
+      param: "temperature",
+      code: "invalid_temperature",
+      failureReason: "invalid_temperature",
+    });
+  }
+
+  return value;
 };
 
 const parseMessageRole = (value: unknown, index: number): OpenAIChatMessageRole => {
@@ -134,13 +152,14 @@ export const parseChatCompletionRequest = (value: unknown): OpenAIChatCompletion
 
   const model = readRequiredString(value.model, "model");
   const stream = value.stream;
+  const temperature = readOptionalTemperature(value.temperature);
 
-  if (stream !== undefined && stream !== false) {
+  if (stream !== undefined && typeof stream !== "boolean") {
     throw createValidationError({
-      message: "Invalid value for 'stream': only false or omitted is supported.",
+      message: "Invalid value for 'stream': expected a boolean.",
       param: "stream",
-      code: "unsupported_stream",
-      failureReason: "unsupported_stream",
+      code: "invalid_stream",
+      failureReason: "invalid_stream",
     });
   }
 
@@ -179,7 +198,12 @@ export const parseChatCompletionRequest = (value: unknown): OpenAIChatCompletion
     };
   });
 
-  return stream === false ? { model, messages, stream: false } : { model, messages };
+  return {
+    model,
+    messages,
+    ...(stream !== undefined ? { stream } : {}),
+    ...(temperature !== undefined ? { temperature } : {}),
+  };
 };
 
 export const resolveChatCompletionModel = (
@@ -189,19 +213,47 @@ export const resolveChatCompletionModel = (
   const modelParam = "model";
   const [providerId, modelId, ...extraSegments] = model.split("/");
 
-  if (!providerId || !modelId || extraSegments.length > 0) {
+  if (providerId && modelId && extraSegments.length === 0) {
+    const provider = catalog.providers.find((entry) => entry.connected && entry.id === providerId);
+    const upstreamModel = provider?.models.find((entry) => entry.id === modelId);
+
+    if (!provider || !upstreamModel) {
+      throw createValidationError({
+        message: `Invalid value for '${modelParam}': model '${model}' is not available from the current connected catalog.`,
+        param: modelParam,
+        code: "invalid_model",
+        failureReason: "invalid_model",
+      });
+    }
+
+    return {
+      model,
+      providerId,
+      modelId,
+    };
+  }
+
+  if (!providerId || modelId || extraSegments.length > 0) {
     throw createValidationError({
-      message: `Invalid value for '${modelParam}': expected the format 'provider/model'.`,
+      message: `Invalid value for '${modelParam}': expected the format 'provider/model' or a bare model id.`,
       param: modelParam,
       code: "invalid_model",
       failureReason: "invalid_model",
     });
   }
 
-  const provider = catalog.providers.find((entry) => entry.connected && entry.id === providerId);
-  const upstreamModel = provider?.models.find((entry) => entry.id === modelId);
+  const matches = catalog.providers
+    .filter((entry) => entry.connected)
+    .flatMap((provider) =>
+      provider.models
+        .filter((entry) => entry.id === providerId)
+        .map((entry) => ({
+          providerId: provider.id,
+          modelId: entry.id,
+        })),
+    );
 
-  if (!provider || !upstreamModel) {
+  if (matches.length === 0) {
     throw createValidationError({
       message: `Invalid value for '${modelParam}': model '${model}' is not available from the current connected catalog.`,
       param: modelParam,
@@ -210,10 +262,21 @@ export const resolveChatCompletionModel = (
     });
   }
 
+  if (matches.length > 1) {
+    throw createValidationError({
+      message: `Invalid value for '${modelParam}': bare model '${model}' is ambiguous across the current connected catalog; use the format 'provider/model'.`,
+      param: modelParam,
+      code: "invalid_model",
+      failureReason: "invalid_model",
+    });
+  }
+
+  const [resolvedMatch] = matches;
+
   return {
     model,
-    providerId,
-    modelId,
+    providerId: resolvedMatch.providerId,
+    modelId: resolvedMatch.modelId,
   };
 };
 

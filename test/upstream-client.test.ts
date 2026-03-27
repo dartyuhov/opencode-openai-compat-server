@@ -560,6 +560,190 @@ describe("OpenCodeUpstreamClient", () => {
     });
   });
 
+  test("streams assistant text deltas from the upstream event feed", async () => {
+    let createMessageBody: unknown;
+    let eventController: ReadableStreamDefaultController<Uint8Array> | null = null;
+    const encoder = new TextEncoder();
+    const writeEvent = (payload: unknown) => {
+      eventController?.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+    };
+    const server = registerServer(async (request) => {
+      const url = new URL(request.url);
+
+      if (request.method === "GET" && url.pathname === "/global/event") {
+        expect(url.searchParams.get("directory")).toBe("/workspace/demo");
+
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              eventController = controller;
+              writeEvent({
+                payload: {
+                  type: "server.connected",
+                  properties: {},
+                },
+              });
+            },
+            cancel() {
+              eventController = null;
+            },
+          }),
+          {
+            headers: {
+              "content-type": "text/event-stream",
+            },
+          },
+        );
+      }
+
+      if (request.method === "POST" && url.pathname === "/session/session-123/message") {
+        expect(url.searchParams.get("directory")).toBe("/workspace/demo");
+        createMessageBody = await request.json();
+
+        writeEvent({
+          payload: {
+            type: "message.updated",
+            properties: {
+              info: {
+                id: "message-1",
+                sessionID: "session-123",
+                role: "assistant",
+                time: {
+                  created: 1700000002,
+                },
+              },
+            },
+          },
+        });
+        writeEvent({
+          payload: {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "part-2",
+                sessionID: "session-123",
+                messageID: "message-1",
+                type: "text",
+                text: "",
+              },
+            },
+          },
+        });
+        writeEvent({
+          payload: {
+            type: "message.part.delta",
+            properties: {
+              sessionID: "session-123",
+              messageID: "message-1",
+              partID: "part-2",
+              field: "text",
+              delta: "Hello",
+            },
+          },
+        });
+        writeEvent({
+          payload: {
+            type: "message.part.delta",
+            properties: {
+              sessionID: "session-123",
+              messageID: "message-1",
+              partID: "part-2",
+              field: "text",
+              delta: " world",
+            },
+          },
+        });
+
+        await sleep(10);
+
+        return Response.json({
+          info: {
+            id: "message-1",
+            sessionID: "session-123",
+            role: "assistant",
+            time: {
+              created: 1700000002,
+              completed: 1700000003,
+            },
+            parentID: "message-0",
+            modelID: "gpt-5.1",
+            providerID: "openai",
+            mode: "chat",
+            path: {
+              cwd: "/workspace/demo",
+              root: "/workspace/demo",
+            },
+            finish: "stop",
+          },
+          parts: [
+            {
+              id: "part-2",
+              sessionID: "session-123",
+              messageID: "message-1",
+              type: "text",
+              text: "Hello world",
+            },
+          ],
+        });
+      }
+
+      return new Response("Not found", { status: 404 });
+    });
+
+    const client = new OpenCodeUpstreamClient({
+      baseUrl: buildBaseUrl(server),
+      requestTimeoutMs: 500,
+      modelsCacheTtlMs: 100,
+      directory: "/workspace/demo",
+    });
+
+    const events: Array<Record<string, unknown>> = [];
+    const assistantMessage = await client.streamAssistantMessage(
+      {
+        sessionId: "session-123",
+        providerId: "openai",
+        modelId: "gpt-5.1",
+        agent: "build",
+        prompt: "Say hello in one sentence.",
+      },
+      (event) => {
+        events.push(event);
+      },
+    );
+
+    expect(createMessageBody).toEqual({
+      model: {
+        providerID: "openai",
+        modelID: "gpt-5.1",
+      },
+      agent: "build",
+      parts: [
+        {
+          type: "text",
+          text: "Say hello in one sentence.",
+        },
+      ],
+    });
+    expect(events).toEqual([
+      {
+        type: "message_start",
+        messageId: "message-1",
+        createdAt: 1700000002,
+      },
+      {
+        type: "text_delta",
+        messageId: "message-1",
+        delta: "Hello",
+      },
+      {
+        type: "text_delta",
+        messageId: "message-1",
+        delta: " world",
+      },
+    ]);
+    expect(assistantMessage.text).toBe("Hello world");
+  });
+
   test("converts network failures into sanitized internal errors", async () => {
     const server = Bun.serve({
       hostname: "127.0.0.1",

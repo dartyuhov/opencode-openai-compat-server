@@ -51,6 +51,18 @@ export type CreateUpstreamAssistantMessageInput = {
   system?: string | null;
 };
 
+export type UpstreamAssistantMessageStreamEvent =
+  | {
+      type: "message_start";
+      messageId: string;
+      createdAt: number;
+    }
+  | {
+      type: "text_delta";
+      messageId: string;
+      delta: string;
+    };
+
 export type UpstreamModelCost = {
   input: number;
   output: number;
@@ -339,6 +351,120 @@ export class OpenCodeUpstreamClient {
     });
   }
 
+  async streamAssistantMessage(
+    input: CreateUpstreamAssistantMessageInput,
+    onEvent: (event: UpstreamAssistantMessageStreamEvent) => void,
+  ) {
+    const sessionId = requireNonEmptyString(input.sessionId, "sessionId");
+    const directory = this.resolveDirectory(input.directory);
+    let stopEventStream = async () => undefined;
+
+    try {
+      const controller = new AbortController();
+      const eventResponse = await this.requestEventStream({
+        path: "/global/event",
+        directory,
+        signal: controller.signal,
+      });
+      let assistantMessageId: string | null = null;
+      const textPartIds = new Set<string>();
+      const eventsPromise = drainServerSentEvents({
+        body: eventResponse.body!,
+        endpoint: "/global/event",
+        onEvent: (value) => {
+          if (!isRecord(value)) {
+            return;
+          }
+
+          const payload = value.payload;
+          if (!isRecord(payload) || typeof payload.type !== "string") {
+            return;
+          }
+
+          const properties = payload.properties;
+
+          if (payload.type === "message.updated") {
+            const info = isRecord(properties) && isRecord(properties.info) ? properties.info : null;
+            const time = isRecord(info?.time) ? info.time : null;
+
+            if (
+              assistantMessageId === null &&
+              typeof info?.sessionID === "string" &&
+              info.sessionID === sessionId &&
+              info.role === "assistant" &&
+              typeof info.id === "string" &&
+              typeof time?.created === "number" &&
+              Number.isFinite(time.created)
+            ) {
+              assistantMessageId = info.id;
+              onEvent({
+                type: "message_start",
+                messageId: assistantMessageId,
+                createdAt: time.created,
+              });
+            }
+
+            return;
+          }
+
+          if (payload.type === "message.part.updated") {
+            const part = isRecord(properties) && isRecord(properties.part) ? properties.part : null;
+
+            if (
+              assistantMessageId !== null &&
+              typeof part?.sessionID === "string" &&
+              part.sessionID === sessionId &&
+              part.messageID === assistantMessageId &&
+              part.type === "text" &&
+              typeof part.id === "string"
+            ) {
+              textPartIds.add(part.id);
+            }
+
+            return;
+          }
+
+          if (payload.type !== "message.part.delta" || assistantMessageId === null || !isRecord(properties)) {
+            return;
+          }
+
+          if (
+            properties.sessionID !== sessionId ||
+            properties.messageID !== assistantMessageId ||
+            properties.field !== "text" ||
+            typeof properties.partID !== "string" ||
+            !textPartIds.has(properties.partID) ||
+            typeof properties.delta !== "string" ||
+            properties.delta.length === 0
+          ) {
+            return;
+          }
+
+          onEvent({
+            type: "text_delta",
+            messageId: assistantMessageId,
+            delta: properties.delta,
+          });
+        },
+      });
+
+      stopEventStream = async () => {
+        controller.abort();
+        await eventsPromise.catch(() => undefined);
+      };
+    } catch (error) {
+      if (!isAbortError(error) && !isUpstreamClientError(error)) {
+        throw error;
+      }
+    }
+
+    try {
+      return await this.createAssistantMessage(input);
+    } finally {
+      await stopEventStream();
+    }
+  }
+
   private resolveDirectory(directory: string | null | undefined) {
     return normalizeOptionalString(directory) ?? this.defaultDirectory;
   }
@@ -367,6 +493,12 @@ export class OpenCodeUpstreamClient {
       headers.set("authorization", this.basicAuthHeader);
     }
 
+    return headers;
+  }
+
+  private buildEventStreamHeaders() {
+    const headers = this.buildHeaders(false);
+    headers.set("accept", "text/event-stream");
     return headers;
   }
 
@@ -438,6 +570,49 @@ export class OpenCodeUpstreamClient {
         endpoint: input.path,
       });
     }
+  }
+
+  private async requestEventStream(input: {
+    path: string;
+    directory: string | null;
+    signal: AbortSignal;
+  }) {
+    const requestUrl = this.buildUrl(input.path, input.directory);
+
+    let response: Response;
+
+    try {
+      response = await this.fetchImpl(requestUrl, {
+        method: "GET",
+        headers: this.buildEventStreamHeaders(),
+        signal: input.signal,
+      });
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
+
+      throw new UpstreamClientError({
+        code: "network",
+        message: "OpenCode upstream is unreachable.",
+        retryable: true,
+        endpoint: input.path,
+      });
+    }
+
+    if (!response.ok) {
+      throw this.createHttpError(input.path, response.status);
+    }
+
+    if (!response.body) {
+      throw new UpstreamClientError({
+        code: "invalid_response",
+        message: "OpenCode upstream returned an invalid response.",
+        endpoint: input.path,
+      });
+    }
+
+    return response;
   }
 
   private createHttpError(endpoint: string, sourceStatus: number) {
@@ -582,6 +757,68 @@ const parseJsonBody = (value: string) => {
     return JSON.parse(value) as unknown;
   } catch {
     return undefined;
+  }
+};
+
+const isAbortError = (error: unknown) => error instanceof Error && error.name === "AbortError";
+
+const drainServerSentEvents = async (input: {
+  body: ReadableStream<Uint8Array>;
+  endpoint: string;
+  onEvent: (value: unknown) => void;
+}) => {
+  const reader = input.body.getReader();
+  const decoder = new TextDecoder();
+  const dataLines: string[] = [];
+  let buffer = "";
+
+  const emitEvent = () => {
+    if (dataLines.length === 0) {
+      return;
+    }
+
+    const payload = parseJsonBody(dataLines.join("\n"));
+    dataLines.length = 0;
+
+    if (payload === undefined) {
+      throw new UpstreamClientError({
+        code: "invalid_response",
+        message: "OpenCode upstream returned an invalid response.",
+        endpoint: input.endpoint,
+      });
+    }
+
+    input.onEvent(payload);
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+
+    let newlineIndex = buffer.indexOf("\n");
+    while (newlineIndex >= 0) {
+      const rawLine = buffer.slice(0, newlineIndex);
+      buffer = buffer.slice(newlineIndex + 1);
+      const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+
+      if (line.length === 0) {
+        emitEvent();
+      } else if (line.startsWith("data:")) {
+        dataLines.push(line.slice(5).trimStart());
+      }
+
+      newlineIndex = buffer.indexOf("\n");
+    }
+
+    if (done) {
+      const trailingLine = buffer.endsWith("\r") ? buffer.slice(0, -1) : buffer;
+      if (trailingLine.startsWith("data:")) {
+        dataLines.push(trailingLine.slice(5).trimStart());
+      }
+
+      emitEvent();
+      return;
+    }
   }
 };
 

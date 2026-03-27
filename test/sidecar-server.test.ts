@@ -61,6 +61,27 @@ const startTestSidecar = async (
 
 const getRequestLogs = (logs: LogEntry[]) => logs.filter((entry) => entry.message === "OpenAI compatibility sidecar request completed.");
 
+const parseServerSentEvents = (bodyText: string) => {
+  const events: Array<string | Record<string, unknown>> = [];
+
+  for (const block of bodyText.split("\n\n")) {
+    const data = block
+      .split("\n")
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n")
+      .trim();
+
+    if (data.length === 0) {
+      continue;
+    }
+
+    events.push(data === "[DONE]" ? data : (JSON.parse(data) as Record<string, unknown>));
+  }
+
+  return events;
+};
+
 const buildConnectedOpenAICatalog = () => ({
   all: [
     {
@@ -587,16 +608,160 @@ describe("sidecar server", () => {
     });
   });
 
-  test("rejects stream=true before any upstream catalog lookup", async () => {
-    let providerRequests = 0;
-    const upstream = registerServer(() => {
-      providerRequests += 1;
+  test("streams assistant deltas as OpenAI-compatible server-sent events", async () => {
+    const observedPaths: string[] = [];
+    let createMessageBody: unknown;
+    let eventController: ReadableStreamDefaultController<Uint8Array> | null = null;
+    const encoder = new TextEncoder();
+    const writeEvent = (payload: unknown) => {
+      eventController?.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+    };
+    const upstream = registerServer(async (request) => {
+      const url = new URL(request.url);
+      observedPaths.push(`${request.method} ${url.pathname}`);
 
-      return Response.json({
-        all: [],
-        default: {},
-        connected: [],
-      });
+      if (request.method === "GET" && url.pathname === "/provider") {
+        return Response.json(buildConnectedOpenAICatalog());
+      }
+
+      if (request.method === "POST" && url.pathname === "/session") {
+        return Response.json({
+          id: "session-123",
+          projectID: "project-1",
+          directory: "/workspace/demo",
+          title: "OpenAI chat completion",
+          version: "1",
+          time: {
+            created: 1700000000,
+            updated: 1700000001,
+          },
+        });
+      }
+
+      if (request.method === "GET" && url.pathname === "/global/event") {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              eventController = controller;
+              writeEvent({
+                payload: {
+                  type: "server.connected",
+                  properties: {},
+                },
+              });
+            },
+            cancel() {
+              eventController = null;
+            },
+          }),
+          {
+            headers: {
+              "content-type": "text/event-stream",
+            },
+          },
+        );
+      }
+
+      if (request.method === "POST" && url.pathname === "/session/session-123/message") {
+        createMessageBody = await request.json();
+
+        writeEvent({
+          payload: {
+            type: "message.updated",
+            properties: {
+              info: {
+                id: "message-1",
+                sessionID: "session-123",
+                role: "assistant",
+                time: {
+                  created: 1700000002,
+                },
+              },
+            },
+          },
+        });
+        writeEvent({
+          payload: {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "part-1",
+                sessionID: "session-123",
+                messageID: "message-1",
+                type: "text",
+                text: "",
+              },
+            },
+          },
+        });
+        writeEvent({
+          payload: {
+            type: "message.part.delta",
+            properties: {
+              sessionID: "session-123",
+              messageID: "message-1",
+              partID: "part-1",
+              field: "text",
+              delta: "Hello",
+            },
+          },
+        });
+        writeEvent({
+          payload: {
+            type: "message.part.delta",
+            properties: {
+              sessionID: "session-123",
+              messageID: "message-1",
+              partID: "part-1",
+              field: "text",
+              delta: " world",
+            },
+          },
+        });
+
+        await sleep(10);
+
+        return Response.json({
+          info: {
+            id: "message-1",
+            sessionID: "session-123",
+            role: "assistant",
+            time: {
+              created: 1700000002,
+              completed: 1700000003,
+            },
+            parentID: "message-0",
+            modelID: "gpt-5.1",
+            providerID: "openai",
+            mode: "chat",
+            path: {
+              cwd: "/workspace/demo",
+              root: "/workspace/demo",
+            },
+            tokens: {
+              input: 12,
+              output: 7,
+              reasoning: 0,
+              cache: {
+                read: 0,
+                write: 0,
+              },
+            },
+            finish: "stop",
+          },
+          parts: [
+            {
+              id: "part-1",
+              sessionID: "session-123",
+              messageID: "message-1",
+              type: "text",
+              text: "Hello world",
+            },
+          ],
+        });
+      }
+
+      return new Response("Not found", { status: 404 });
     });
     const logs: LogEntry[] = [];
     const runtime = await startTestSidecar(logs, {
@@ -619,25 +784,98 @@ describe("sidecar server", () => {
         ],
       }),
     });
-    const body = (await response.json()) as Record<string, any>;
+    const bodyText = await response.text();
+    const events = parseServerSentEvents(bodyText);
 
-    expect(response.status).toBe(400);
-    expect(body).toEqual({
-      error: {
-        message: "Invalid value for 'stream': only false or omitted is supported.",
-        type: "invalid_request_error",
-        param: "stream",
-        code: "unsupported_stream",
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    expect(observedPaths).toEqual([
+      "GET /provider",
+      "POST /session",
+      "GET /global/event",
+      "POST /session/session-123/message",
+    ]);
+    expect(createMessageBody).toEqual({
+      model: {
+        providerID: "openai",
+        modelID: "gpt-5.1",
       },
+      agent: "build",
+      parts: [
+        {
+          type: "text",
+          text: "User:\nSay hello.",
+        },
+      ],
     });
-    expect(providerRequests).toBe(0);
+    expect(events).toEqual([
+      {
+        id: "message-1",
+        object: "chat.completion.chunk",
+        created: 1700000002,
+        model: "openai/gpt-5.1",
+        choices: [
+          {
+            index: 0,
+            delta: {
+              role: "assistant",
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        id: "message-1",
+        object: "chat.completion.chunk",
+        created: 1700000002,
+        model: "openai/gpt-5.1",
+        choices: [
+          {
+            index: 0,
+            delta: {
+              content: "Hello",
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        id: "message-1",
+        object: "chat.completion.chunk",
+        created: 1700000002,
+        model: "openai/gpt-5.1",
+        choices: [
+          {
+            index: 0,
+            delta: {
+              content: " world",
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        id: "message-1",
+        object: "chat.completion.chunk",
+        created: 1700000002,
+        model: "openai/gpt-5.1",
+        choices: [
+          {
+            index: 0,
+            delta: {},
+            finish_reason: "stop",
+          },
+        ],
+      },
+      "[DONE]",
+    ]);
 
     const [requestLog] = getRequestLogs(logs);
     expect(requestLog?.extra).toEqual({
       method: "POST",
       route: "/v1/chat/completions",
-      status: 400,
-      failureReason: "unsupported_stream",
+      status: 200,
+      failureReason: null,
     });
   });
 
@@ -955,6 +1193,7 @@ describe("sidecar server", () => {
       },
       body: JSON.stringify({
         model: "openai/gpt-5.1",
+        temperature: 0.2,
         messages: [
           {
             role: "system",
@@ -1005,6 +1244,127 @@ describe("sidecar server", () => {
         {
           type: "text",
           text: "System:\nYou are concise.\n\nUser:\nSay hello in one sentence.",
+        },
+      ],
+    });
+
+    const [requestLog] = getRequestLogs(logs);
+    expect(requestLog?.extra).toEqual({
+      method: "POST",
+      route: "/v1/chat/completions",
+      status: 200,
+      failureReason: null,
+    });
+  });
+
+  test("accepts a bare model id when it uniquely matches the connected catalog", async () => {
+    let createMessageBody: unknown;
+    const upstream = registerServer(async (request) => {
+      const url = new URL(request.url);
+
+      if (request.method === "GET" && url.pathname === "/provider") {
+        return Response.json(buildConnectedOpenAICatalog());
+      }
+
+      if (request.method === "POST" && url.pathname === "/session") {
+        return Response.json({
+          id: "session-345",
+          projectID: "project-1",
+          directory: "/workspace/demo",
+          title: "OpenAI chat completion",
+          version: "1",
+          time: {
+            created: 1700000200,
+            updated: 1700000201,
+          },
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/session/session-345/message") {
+        createMessageBody = await request.json();
+
+        return Response.json({
+          info: {
+            id: "message-3",
+            sessionID: "session-345",
+            role: "assistant",
+            time: {
+              created: 1700000202,
+              completed: 1700000203,
+            },
+            parentID: "message-2",
+            modelID: "gpt-5.1",
+            providerID: "openai",
+            mode: "chat",
+            path: {
+              cwd: "/workspace/demo",
+              root: "/workspace/demo",
+            },
+            finish: "stop",
+          },
+          parts: [
+            {
+              id: "part-1",
+              sessionID: "session-345",
+              messageID: "message-3",
+              type: "text",
+              text: "Hello again",
+            },
+          ],
+        });
+      }
+
+      return new Response("Not found", { status: 404 });
+    });
+    const logs: LogEntry[] = [];
+    const runtime = await startTestSidecar(logs, {
+      upstreamUrl: `http://127.0.0.1:${upstream.port}`,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${runtime.server.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-5.1",
+        messages: [
+          {
+            role: "user",
+            content: "Say hello again.",
+          },
+        ],
+      }),
+    });
+    const body = (await response.json()) as Record<string, any>;
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      id: "message-3",
+      object: "chat.completion",
+      created: 1700000202,
+      model: "gpt-5.1",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: "Hello again",
+          },
+          finish_reason: "stop",
+        },
+      ],
+    });
+    expect(createMessageBody).toEqual({
+      model: {
+        providerID: "openai",
+        modelID: "gpt-5.1",
+      },
+      agent: "build",
+      parts: [
+        {
+          type: "text",
+          text: "User:\nSay hello again.",
         },
       ],
     });

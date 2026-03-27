@@ -22,6 +22,7 @@ import {
   isUpstreamClientError,
   type UpstreamAssistantMessage,
   type UpstreamAssistantMessagePart,
+  type UpstreamAssistantMessageStreamEvent,
 } from "./upstream.js";
 
 type PluginClient = PluginInput["client"];
@@ -93,6 +94,21 @@ export type OpenAIChatCompletionResponse = {
   };
 };
 
+type OpenAIChatCompletionChunkResponse = {
+  id: string;
+  object: "chat.completion.chunk";
+  created: number;
+  model: string;
+  choices: Array<{
+    index: number;
+    delta: {
+      role?: "assistant";
+      content?: string;
+    };
+    finish_reason: string | null;
+  }>;
+};
+
 type SidecarRequestLogDetails = {
   method: string;
   route: string;
@@ -103,6 +119,12 @@ type SidecarRequestLogDetails = {
 const SIDECAR_STATE_KEY = Symbol.for("opencode-openai-compat.sidecar-state");
 const JSON_RESPONSE_HEADERS = {
   "content-type": "application/json; charset=utf-8",
+};
+const EVENT_STREAM_RESPONSE_HEADERS = {
+  "content-type": "text/event-stream; charset=utf-8",
+  "cache-control": "no-cache",
+  connection: "keep-alive",
+  "x-accel-buffering": "no",
 };
 
 class SidecarHttpError extends Error {
@@ -296,6 +318,38 @@ export const mapAssistantMessageToChatCompletion = (
     ...(usage ? { usage } : {}),
   };
 };
+
+const createChatCompletionChunk = (input: {
+  id: string;
+  created: number;
+  model: string;
+  delta: OpenAIChatCompletionChunkResponse["choices"][number]["delta"];
+  finishReason?: string | null;
+}): OpenAIChatCompletionChunkResponse => ({
+  id: input.id,
+  object: "chat.completion.chunk",
+  created: input.created,
+  model: input.model,
+  choices: [
+    {
+      index: 0,
+      delta: input.delta,
+      finish_reason: input.finishReason ?? null,
+    },
+  ],
+});
+
+const encodeServerSentEvent = (encoder: TextEncoder, payload: unknown) => encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
+
+const encodeServerSentComment = (encoder: TextEncoder, comment: string) => encoder.encode(`: ${comment}\n\n`);
+
+const encodeDoneEvent = (encoder: TextEncoder) => encoder.encode("data: [DONE]\n\n");
+
+const eventStreamResponse = (stream: ReadableStream<Uint8Array>, init: ResponseInit = {}) =>
+  new Response(stream, {
+    ...init,
+    headers: buildResponseHeaders(EVENT_STREAM_RESPONSE_HEADERS),
+  });
 
 const readJsonRequest = async <T>(request: Request): Promise<T> => {
   const rawBody = await request.text();
@@ -538,6 +592,163 @@ const handleModelsRequest = async (context: SidecarRouteContext) => {
   }
 };
 
+const handleStreamingChatCompletionsRequest = async (
+  context: SidecarRouteContext,
+  input: {
+    model: string;
+    providerId: string;
+    modelId: string;
+    prompt: string;
+    sessionId: string;
+  },
+) => {
+  const upstreamClient = context.runtime.upstreamClient;
+  if (!upstreamClient) {
+    throw new SidecarHttpError({
+      status: 502,
+      message: "OpenCode upstream is not configured.",
+      type: "api_error",
+      code: "upstream_unconfigured",
+      failureReason: "upstream_unconfigured",
+    });
+  }
+
+  const encoder = new TextEncoder();
+  let heartbeatId: ReturnType<typeof setInterval> | null = null;
+
+  return eventStreamResponse(
+    new ReadableStream<Uint8Array>({
+      async start(controller) {
+        let assistantMessageId: string | null = null;
+        let created = normalizeCompletionTimestamp(Date.now());
+        let streamedContent = "";
+        heartbeatId = setInterval(() => {
+          controller.enqueue(encodeServerSentComment(encoder, "keep-alive"));
+        }, 1_000);
+
+        const enqueueChunk = (event: UpstreamAssistantMessageStreamEvent) => {
+          if (event.type === "message_start") {
+            assistantMessageId = event.messageId;
+            created = normalizeCompletionTimestamp(event.createdAt);
+            controller.enqueue(
+              encodeServerSentEvent(
+                encoder,
+                createChatCompletionChunk({
+                  id: assistantMessageId,
+                  created,
+                  model: input.model,
+                  delta: {
+                    role: "assistant",
+                  },
+                }),
+              ),
+            );
+            return;
+          }
+
+          streamedContent += event.delta;
+          controller.enqueue(
+            encodeServerSentEvent(
+              encoder,
+              createChatCompletionChunk({
+                id: event.messageId,
+                created,
+                model: input.model,
+                delta: {
+                  content: event.delta,
+                },
+              }),
+            ),
+          );
+        };
+
+        try {
+          const assistantMessage = await upstreamClient.streamAssistantMessage(
+            {
+              sessionId: input.sessionId,
+              providerId: input.providerId,
+              modelId: input.modelId,
+              agent: context.runtime.config.defaultAgent,
+              prompt: input.prompt,
+            },
+            enqueueChunk,
+          );
+          const assistantContent = readAssistantContent(assistantMessage);
+
+          if (!assistantMessageId) {
+            assistantMessageId = assistantMessage.id;
+            created = normalizeCompletionTimestamp(assistantMessage.createdAt);
+            controller.enqueue(
+              encodeServerSentEvent(
+                encoder,
+                createChatCompletionChunk({
+                  id: assistantMessageId,
+                  created,
+                  model: input.model,
+                  delta: {
+                    role: "assistant",
+                  },
+                }),
+              ),
+            );
+          }
+
+          const remainder = assistantContent.startsWith(streamedContent)
+            ? assistantContent.slice(streamedContent.length)
+            : assistantContent;
+
+          if (remainder.length > 0) {
+            controller.enqueue(
+              encodeServerSentEvent(
+                encoder,
+                createChatCompletionChunk({
+                  id: assistantMessageId,
+                  created,
+                  model: input.model,
+                  delta: {
+                    content: remainder,
+                  },
+                }),
+              ),
+            );
+          }
+
+          controller.enqueue(
+            encodeServerSentEvent(
+              encoder,
+              createChatCompletionChunk({
+                id: assistantMessageId,
+                created,
+                model: input.model,
+                delta: {},
+                finishReason: assistantMessage.finish && assistantMessage.finish.length > 0 ? assistantMessage.finish : "stop",
+              }),
+            ),
+          );
+          controller.enqueue(encodeDoneEvent(encoder));
+          if (heartbeatId) {
+            clearInterval(heartbeatId);
+            heartbeatId = null;
+          }
+          controller.close();
+        } catch (error) {
+          if (heartbeatId) {
+            clearInterval(heartbeatId);
+            heartbeatId = null;
+          }
+          controller.error(error);
+        }
+      },
+      cancel() {
+        if (heartbeatId) {
+          clearInterval(heartbeatId);
+          heartbeatId = null;
+        }
+      },
+    }),
+  );
+};
+
 const handleChatCompletionsRequest = async (context: SidecarRouteContext) => {
   const requestBody = await readJsonRequest<unknown>(context.request);
   const parsedRequest = parseChatCompletionRequest(requestBody);
@@ -558,6 +769,17 @@ const handleChatCompletionsRequest = async (context: SidecarRouteContext) => {
   const session = await context.runtime.upstreamClient.createSession({
     title: "OpenAI chat completion",
   });
+
+  if (parsedRequest.stream === true) {
+    return handleStreamingChatCompletionsRequest(context, {
+      model: parsedRequest.model,
+      providerId: resolvedModel.providerId,
+      modelId: resolvedModel.modelId,
+      prompt,
+      sessionId: session.id,
+    });
+  }
+
   const assistantMessage = await context.runtime.upstreamClient.createAssistantMessage({
     sessionId: session.id,
     providerId: resolvedModel.providerId,

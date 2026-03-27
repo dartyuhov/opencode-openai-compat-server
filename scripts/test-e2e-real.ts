@@ -134,6 +134,37 @@ const fetchJson = async (url: string, init?: RequestInit) => {
   };
 };
 
+const parseServerSentEvents = (bodyText: string) => {
+  const events: Array<string | Record<string, unknown>> = [];
+
+  for (const block of bodyText.split("\n\n")) {
+    const data = block
+      .split("\n")
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n")
+      .trim();
+
+    if (data.length === 0) {
+      continue;
+    }
+
+    events.push(data === "[DONE]" ? data : (JSON.parse(data) as Record<string, unknown>));
+  }
+
+  return events;
+};
+
+const fetchEventStream = async (url: string, init?: RequestInit) => {
+  const response = await fetch(url, init);
+  const bodyText = await response.text();
+
+  return {
+    response,
+    events: parseServerSentEvents(bodyText),
+  };
+};
+
 const waitForHealth = async (
   sidecarBaseUrl: string,
   options: {
@@ -440,6 +471,64 @@ const verifyPositiveFlow = async (builtPlugin: BuiltPluginModule, upstreamUrl: U
   ensure(typeof assistantContent === "string" && assistantContent.trim().length > 0, "Live chat completion returned empty assistant content.");
 
   console.log(`Live chat verification passed with assistant content: ${assistantContent.trim()}`);
+
+  const { response: streamResponse, events: streamEvents } = await fetchEventStream(`${sidecarBaseUrl}/v1/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: selectedModel,
+      stream: true,
+      messages: [
+        {
+          role: "system",
+          content: "You are concise.",
+        },
+        {
+          role: "user",
+          content: "Reply with exactly REAL_STREAM_E2E_OK and nothing else.",
+        },
+      ],
+    }),
+  });
+
+  ensure(streamResponse.status === 200, `Expected streaming POST /v1/chat/completions to return 200, received ${streamResponse.status}.`);
+  ensure(
+    streamResponse.headers.get("content-type")?.includes("text/event-stream") === true,
+    "Streaming POST /v1/chat/completions did not return an event-stream content type.",
+  );
+  ensure(streamEvents.length >= 3, "Streaming POST /v1/chat/completions returned too few SSE events.");
+  ensure(streamEvents[streamEvents.length - 1] === "[DONE]", "Streaming POST /v1/chat/completions did not terminate with [DONE].");
+
+  const streamedPayloads = streamEvents.filter(
+    (event): event is Record<string, unknown> => typeof event === "object" && event !== null,
+  );
+  ensure(streamedPayloads.length >= 2, "Streaming POST /v1/chat/completions did not return JSON chunk payloads.");
+
+  const streamedAssistantContent = streamedPayloads
+    .flatMap((payload) => {
+      const choices = Array.isArray(payload.choices) ? payload.choices : [];
+      return choices.map((choice) => {
+        if (typeof choice !== "object" || choice === null) {
+          return "";
+        }
+
+        const delta = (choice as { delta?: { content?: unknown } }).delta;
+        return typeof delta?.content === "string" ? delta.content : "";
+      });
+    })
+    .join("");
+  ensure(
+    streamedAssistantContent.trim().length > 0,
+    "Streaming POST /v1/chat/completions returned no assistant text deltas.",
+  );
+  ensure(
+    streamedAssistantContent.trim() === "REAL_STREAM_E2E_OK",
+    `Streaming POST /v1/chat/completions returned unexpected assistant content: ${streamedAssistantContent.trim()}`,
+  );
+
+  console.log(`Live streaming verification passed with assistant content: ${streamedAssistantContent.trim()}`);
   return {
     selectedModel,
   };

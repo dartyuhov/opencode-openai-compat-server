@@ -50,6 +50,7 @@ export {
   type OpenCodeUpstreamClientOptions,
   type UpstreamAssistantMessage,
   type UpstreamAssistantMessagePart,
+  type UpstreamAssistantMessageStreamEvent,
   type UpstreamClientErrorCode,
   type UpstreamModel,
   type UpstreamModelCost,

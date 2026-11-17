@@ -249,8 +249,8 @@ describe("chat completion request helpers", () => {
     });
   });
 
-  test("rejects unsupported top-level fields with a field-specific error", () => {
-    const error = getValidationError(() =>
+  test("ignores unknown top-level fields for client compatibility", () => {
+    expect(
       parseChatCompletionRequest({
         model: "openai/gpt-5.1",
         messages: [
@@ -260,14 +260,17 @@ describe("chat completion request helpers", () => {
           },
         ],
         top_p: 0.9,
+        reasoning_effort: "low",
+        max_tokens: 512,
       }),
-    );
-
-    expect(error).toMatchObject({
-      message: "Unsupported field 'top_p' in chat completion request.",
-      param: "top_p",
-      code: "unsupported_field",
-      failureReason: "unsupported_field",
+    ).toEqual({
+      model: "openai/gpt-5.1",
+      messages: [
+        {
+          role: "user",
+          content: "Hello",
+        },
+      ],
     });
   });
 

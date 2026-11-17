@@ -1,7 +1,8 @@
 import type { UpstreamProviderCatalog } from "./upstream.js";
 
-const ALLOWED_CHAT_COMPLETION_REQUEST_KEYS = new Set(["model", "messages", "stream", "temperature"]);
-const ALLOWED_CHAT_MESSAGE_KEYS = new Set(["role", "content"]);
+// FluidVoice (and other OpenAI-compatible clients) send extra fields like
+// reasoning_effort, max_tokens, top_p, etc. We parse what we need and ignore
+// the rest instead of failing closed.
 const SUPPORTED_CHAT_MESSAGE_ROLES = ["system", "user", "assistant"] as const;
 
 type JsonRecord = Record<string, unknown>;
@@ -51,9 +52,6 @@ export class ChatCompletionValidationError extends Error {
 }
 
 const isRecord = (value: unknown): value is JsonRecord => typeof value === "object" && value !== null && !Array.isArray(value);
-
-const getUnsupportedKey = (value: JsonRecord, allowedKeys: Set<string>) =>
-  Object.keys(value).find((key) => !allowedKeys.has(key)) ?? null;
 
 const createValidationError = (input: {
   message: string;
@@ -140,16 +138,6 @@ export const parseChatCompletionRequest = (value: unknown): OpenAIChatCompletion
     });
   }
 
-  const unsupportedKey = getUnsupportedKey(value, ALLOWED_CHAT_COMPLETION_REQUEST_KEYS);
-  if (unsupportedKey) {
-    throw createValidationError({
-      message: `Unsupported field '${unsupportedKey}' in chat completion request.`,
-      param: unsupportedKey,
-      code: "unsupported_field",
-      failureReason: "unsupported_field",
-    });
-  }
-
   const model = readRequiredString(value.model, "model");
   const stream = value.stream;
   const temperature = readOptionalTemperature(value.temperature);
@@ -179,16 +167,6 @@ export const parseChatCompletionRequest = (value: unknown): OpenAIChatCompletion
         param: `messages[${index}]`,
         code: "invalid_message",
         failureReason: "invalid_message",
-      });
-    }
-
-    const unsupportedMessageKey = getUnsupportedKey(entry, ALLOWED_CHAT_MESSAGE_KEYS);
-    if (unsupportedMessageKey) {
-      throw createValidationError({
-        message: `Unsupported field 'messages[${index}].${unsupportedMessageKey}' in chat completion request.`,
-        param: `messages[${index}].${unsupportedMessageKey}`,
-        code: "unsupported_field",
-        failureReason: "unsupported_field",
       });
     }
 
